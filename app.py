@@ -94,7 +94,7 @@ def get_jobs(
     limit: int = 25
 ):
 
-       session = Session()
+    session = Session()
 
     query = session.query(Job)
 
