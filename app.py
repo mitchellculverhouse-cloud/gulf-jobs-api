@@ -96,48 +96,59 @@ def get_jobs(
     limit: int = 25
 ):
 
-    session = Session()
+   session = Session()
 
-    query = session.query(Job)
+query = session.query(Job)
 
-    if search:
-        text = f"%{search}%"
+if search:
+    text = f"%{search}%"
 
-        query = query.filter(
-            or_(
-                Job.title.ilike(text),
-                Job.description.ilike(text),
-                Job.skills.ilike(text),
-                Job.company_name.ilike(text)
-            )
+    query = query.filter(
+        or_(
+            Job.title.ilike(text),
+            Job.description.ilike(text),
+            Job.skills.ilike(text),
+            Job.company_name.ilike(text)
         )
+    )
 
-    if country:
-        query = query.filter(Job.country == country)
+if country:
+    text = f"%{country}%"
 
-    if city:
-        query = query.filter(Job.city == city)
+    query = query.filter(
+        Job.country.ilike(text)
+    )
 
-    if area:
-        query = query.filter(Job.area == area)
+if city:
+    text = f"%{city}%"
 
-    if category:
-        query = query.filter(Job.category == category)
+    query = query.filter(
+        Job.city.ilike(text)
+    )
 
-    if industry:
-        query = query.filter(Job.industry == industry)
+if area:
+    text = f"%{area}%"
 
-    if currency:
-        query = query.filter(Job.salary_currency == currency)
+    query = query.filter(
+        Job.area.ilike(text)
+    )
 
-    if salary_period:
-        query = query.filter(Job.salary_period == salary_period)
+if category:
+    query = query.filter(Job.category == category)
 
-    if min_salary:
-        query = query.filter(
-            Job.salary_max >= str(min_salary)
-        )
+if industry:
+    query = query.filter(Job.industry == industry)
 
+if currency:
+    query = query.filter(Job.salary_currency == currency)
+
+if salary_period:
+    query = query.filter(Job.salary_period == salary_period)
+
+if min_salary:
+    query = query.filter(
+        Job.salary_max >= str(min_salary)
+    )
     if job_type:
         query = query.filter(Job.job_type == job_type)
 
