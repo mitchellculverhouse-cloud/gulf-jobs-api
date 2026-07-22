@@ -66,9 +66,7 @@ Session = sessionmaker(bind=engine)
 def get_jobs(
     search: str = None,
 
-    country: str = None,
-    city: str = None,
-    area: str = None,
+    location: str = None,
 
     category: str = None,
     industry: str = None,
@@ -96,59 +94,58 @@ def get_jobs(
     limit: int = 25
 ):
 
-   session = Session()
+       session = Session()
 
-query = session.query(Job)
+    query = session.query(Job)
 
-if search:
-    text = f"%{search}%"
+    if search:
+        text = f"%{search}%"
 
-    query = query.filter(
-        or_(
-            Job.title.ilike(text),
-            Job.description.ilike(text),
-            Job.skills.ilike(text),
-            Job.company_name.ilike(text)
+        query = query.filter(
+            or_(
+                Job.title.ilike(text),
+                Job.description.ilike(text),
+                Job.skills.ilike(text),
+                Job.company_name.ilike(text)
+            )
         )
-    )
 
-if country:
-    text = f"%{country}%"
+    if location:
+        text = f"%{location}%"
 
-    query = query.filter(
-        Job.country.ilike(text)
-    )
+        query = query.filter(
+            or_(
+                Job.country.ilike(text),
+                Job.city.ilike(text),
+                Job.area.ilike(text)
+            )
+        )
 
-if city:
-    text = f"%{city}%"
+    if category:
+        query = query.filter(
+            Job.category.ilike(f"%{category}%")
+        )
 
-    query = query.filter(
-        Job.city.ilike(text)
-    )
+    if industry:
+        query = query.filter(
+            Job.industry.ilike(f"%{industry}%")
+        )
 
-if area:
-    text = f"%{area}%"
+    if currency:
+        query = query.filter(
+            Job.salary_currency.ilike(f"%{currency}%")
+        )
 
-    query = query.filter(
-        Job.area.ilike(text)
-    )
+    if salary_period:
+        query = query.filter(
+            Job.salary_period.ilike(f"%{salary_period}%")
+        )
 
-if category:
-    query = query.filter(Job.category == category)
-
-if industry:
-    query = query.filter(Job.industry == industry)
-
-if currency:
-    query = query.filter(Job.salary_currency == currency)
-
-if salary_period:
-    query = query.filter(Job.salary_period == salary_period)
-
-if min_salary:
-    query = query.filter(
-        Job.salary_max >= str(min_salary)
-    )
+    if min_salary:
+        query = query.filter(
+            Job.salary_max >= str(min_salary)
+        )
+        
     if job_type:
         query = query.filter(Job.job_type == job_type)
 
