@@ -1,4 +1,4 @@
-import requests
+import feedparser
 
 from sources import SOURCES
 from normalizer import allowed_country
@@ -13,30 +13,56 @@ def run_import():
         if not source["active"]:
             continue
 
-        print(f"Processing source: {source['name']}")
+        print(f"\nProcessing source: {source['name']}")
 
         try:
 
-            response = requests.get(
-                source["url"],
-                timeout=30
-            )
+            feed = feedparser.parse(source["url"])
 
             print(
-                f"Status: {response.status_code}"
+                f"Jobs found: {len(feed.entries)}"
             )
 
-            print(
-                f"Downloaded: {len(response.text)} characters"
-            )
+
+            for job in feed.entries:
+
+                title = job.get(
+                    "title",
+                    ""
+                )
+
+                link = job.get(
+                    "link",
+                    ""
+                )
+
+                description = job.get(
+                    "description",
+                    ""
+                )
+
+
+                print("--------------------")
+
+                print(
+                    "Title:",
+                    title
+                )
+
+                print(
+                    "Link:",
+                    link
+                )
+
 
         except Exception as e:
 
             print(
-                f"Error downloading source: {e}"
+                f"Import error: {e}"
             )
 
-    print("Import complete.")
+
+    print("\nImport complete.")
 
 
 if __name__ == "__main__":
