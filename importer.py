@@ -3,6 +3,9 @@ import feedparser
 from sources import SOURCES
 from normalizer import normalize_country, allowed_country
 
+from database import Session
+from app import Job
+
 
 def run_import():
 
@@ -79,26 +82,67 @@ def run_import():
                     continue
 
 
+                session = Session()
+
+
+                existing_job = session.query(Job).filter(
+                    Job.apply_url == link
+                ).first()
+
+
+                if existing_job:
+
+                    print(
+                        "Duplicate skipped:",
+                        title
+                    )
+
+                    session.close()
+
+                    continue
+
+
+                new_job = Job(
+
+                    title=title,
+
+                    description=description,
+
+                    country=normalized_country,
+
+                    category=category,
+
+                    apply_url=link,
+
+                    source=source["name"],
+
+                    date_posted=None
+
+                )
+
+
+                session.add(new_job)
+
+                session.commit()
+
+                session.close()
+
+
                 print("--------------------")
 
                 print(
-                    "Title:",
+                    "Saved:",
                     title
-                )
-
-                print(
-                    "Link:",
-                    link
-                )
-
-                print(
-                    "Category:",
-                    category
                 )
 
                 print(
                     "Country:",
                     normalized_country
+                )
+
+                print(
+                    "Source:",
+                    source["name"]
                 )
 
 
