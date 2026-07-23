@@ -4,8 +4,7 @@ from sources import SOURCES
 from normalizer import normalize_country, allowed_country
 
 from database import Session
-from app import Job
-
+from models import Job
 
 def run_import():
 
