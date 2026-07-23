@@ -1,7 +1,7 @@
 import feedparser
 
 from sources import SOURCES
-from normalizer import allowed_country
+from normalizer import normalize_country, allowed_country
 
 
 def run_import():
@@ -41,6 +41,43 @@ def run_import():
                     ""
                 )
 
+                category = job.get(
+                    "category",
+                    ""
+                )
+
+
+                country = None
+
+
+                if "Job Location:" in description:
+
+                    country = description.split(
+                        "Job Location:"
+                    )[1].split(
+                        "</td>"
+                    )[0]
+
+                    country = country.replace(
+                        "<td>",
+                        ""
+                    ).strip()
+
+
+                normalized_country = normalize_country(
+                    country
+                )
+
+
+                if not allowed_country(country):
+
+                    print(
+                        "Skipped:",
+                        country
+                    )
+
+                    continue
+
 
                 print("--------------------")
 
@@ -52,6 +89,16 @@ def run_import():
                 print(
                     "Link:",
                     link
+                )
+
+                print(
+                    "Category:",
+                    category
+                )
+
+                print(
+                    "Country:",
+                    normalized_country
                 )
 
 
