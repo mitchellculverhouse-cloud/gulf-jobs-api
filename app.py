@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Text, or_
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timedelta
+from importer import run_import
 
 app = FastAPI()
 app.add_middleware(
