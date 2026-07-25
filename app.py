@@ -262,3 +262,15 @@ def get_jobs(
         "limit": limit,
         "results": results
     }
+
+from importer import run_import
+
+
+@app.get("/run-import")
+def run_import_test():
+
+    run_import()
+
+    return {
+        "status": "import complete"
+    }
