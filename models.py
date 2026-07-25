@@ -1,3 +1,9 @@
+from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -35,6 +41,3 @@ class Job(Base):
 
     apply_url = Column(String)
     source = Column(String)
-
-
-Session = sessionmaker(bind=engine)
