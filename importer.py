@@ -1,9 +1,8 @@
-import feedparser
 import requests
+import re
+import json
 
 from sources import SOURCES
-from normalizer import normalize_country, allowed_country
-
 from database import Session
 from models import Job
 
@@ -29,94 +28,75 @@ def run_import():
                 timeout=30
             )
 
-            print("HTTP STATUS:", response.status_code)
-
             print(
-                "CONTENT TYPE:",
-                response.headers.get("content-type")
+                "HTTP STATUS:",
+                response.status_code
             )
 
-            print(
-                "RESPONSE START:",
-                response.text[:300]
-            )
-
-            feed = feedparser.parse(response.text)
-
-            print("Feed status:", feed.bozo)
-            print("Feed title:", feed.feed.get("title"))
-            print("Feed keys:", feed.keys())
-            print("Entries:", len(feed.entries))
+            html = response.text
 
             print(
-                f"Jobs found: {len(feed.entries)}"
+                "HTML LENGTH:",
+                len(html)
             )
 
-            for job in feed.entries:
+
+            match = re.search(
+                r'"jobPosts":(\{.*?\}),"currentPageJobPosts"',
+                html
+            )
+
+
+            if not match:
 
                 print(
-                    "PROCESSING JOB:",
-                    job.get("title")
+                    "JOB DATA NOT FOUND"
                 )
+
+                continue
+
+
+            jobs_json = match.group(1)
+
+            jobs = json.loads(
+                jobs_json
+            )
+
+
+            print(
+                "JOBS FOUND:",
+                len(jobs)
+            )
+
+
+            for job_id, job in jobs.items():
 
                 title = job.get(
-                    "title",
+                    "jb_title",
                     ""
                 )
 
-                link = job.get(
-                    "link",
-                    ""
-                )
-
-                description = job.get(
-                    "description",
-                    ""
-                )
 
                 print(
-                    "DESCRIPTION START:",
-                    description[:200]
+                    "PROCESSING:",
+                    title
                 )
 
-                category = job.get(
-                    "category",
-                    ""
+
+                link = (
+                    "https://www.bayt.com/en/job/"
+                    + str(job_id)
+                    + "/"
                 )
 
-                country = None
-
-                if "Job Location:" in description:
-
-                    country = description.split(
-                        "Job Location:"
-                    )[1].split(
-                        "</td>"
-                    )[0]
-
-                    country = country.replace(
-                        "<td>",
-                        ""
-                    ).strip()
-
-                normalized_country = normalize_country(
-                    country
-                )
-
-                if not allowed_country(country):
-
-                    print(
-                        "SKIPPED COUNTRY VALUE:",
-                        repr(country)
-                    )
-
-                    continue
 
                 session = Session()
+
 
                 existing_job = session.query(Job).filter(
                     Job.apply_url == link
                 ).first()
+
 
                 if existing_job:
 
@@ -129,15 +109,16 @@ def run_import():
 
                     continue
 
+
                 new_job = Job(
 
                     title=title,
 
-                    description=description,
+                    description="",
 
-                    country=normalized_country,
+                    country="Saudi Arabia",
 
-                    category=category,
+                    category="",
 
                     apply_url=link,
 
@@ -147,47 +128,33 @@ def run_import():
 
                 )
 
-                session.add(new_job)
+
+                session.add(
+                    new_job
+                )
 
                 session.commit()
 
                 session.close()
 
-                print("--------------------")
 
                 print(
                     "Saved:",
                     title
                 )
 
-                print(
-                    "Country:",
-                    normalized_country
-                )
-
-                print(
-                    "Source:",
-                    source["name"]
-                )
 
         except Exception as e:
 
             print(
-                f"Import error: {e}"
+                "Import error:",
+                e
             )
 
-            session = Session()
 
-            count = session.query(Job).count()
-
-            print(
-                "Total jobs in database:",
-                count
-            )
-
-            session.close()
-
-    print("\nImport complete.")
+    print(
+        "\nImport complete."
+    )
 
 
 if __name__ == "__main__":
