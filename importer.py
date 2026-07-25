@@ -20,6 +20,11 @@ def run_import():
         try:
 
             feed = feedparser.parse(source["url"])
+            
+            print("Feed status:", feed.bozo)
+            print("Feed title:", feed.feed.get("title"))
+            print("Feed keys:", feed.keys())
+            print("Entries:", len(feed.entries))
 
             print(
                 f"Jobs found: {len(feed.entries)}"
