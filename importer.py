@@ -1,10 +1,12 @@
 import feedparser
+import requests
 
 from sources import SOURCES
 from normalizer import normalize_country, allowed_country
 
 from database import Session
 from models import Job
+
 
 def run_import():
 
@@ -19,8 +21,28 @@ def run_import():
 
         try:
 
-            feed = feedparser.parse(source["url"])
-            
+            response = requests.get(
+                source["url"],
+                headers={
+                    "User-Agent": "Mozilla/5.0"
+                },
+                timeout=30
+            )
+
+            print("HTTP STATUS:", response.status_code)
+
+            print(
+                "CONTENT TYPE:",
+                response.headers.get("content-type")
+            )
+
+            print(
+                "RESPONSE START:",
+                response.text[:300]
+            )
+
+            feed = feedparser.parse(response.text)
+
             print("Feed status:", feed.bozo)
             print("Feed title:", feed.feed.get("title"))
             print("Feed keys:", feed.keys())
@@ -30,9 +52,12 @@ def run_import():
                 f"Jobs found: {len(feed.entries)}"
             )
 
-
             for job in feed.entries:
-                print("PROCESSING JOB:", job.get("title"))
+
+                print(
+                    "PROCESSING JOB:",
+                    job.get("title")
+                )
 
                 title = job.get(
                     "title",
@@ -48,16 +73,18 @@ def run_import():
                     "description",
                     ""
                 )
-                print("DESCRIPTION START:", description[:200])
+
+                print(
+                    "DESCRIPTION START:",
+                    description[:200]
+                )
 
                 category = job.get(
                     "category",
                     ""
                 )
 
-
                 country = None
-
 
                 if "Job Location:" in description:
 
@@ -72,29 +99,24 @@ def run_import():
                         ""
                     ).strip()
 
-
                 normalized_country = normalize_country(
                     country
                 )
 
-
                 if not allowed_country(country):
 
-                   print(
-                       "SKIPPED COUNTRY VALUE:",
-                       repr(country)
-                   )
+                    print(
+                        "SKIPPED COUNTRY VALUE:",
+                        repr(country)
+                    )
 
-                   continue
-
+                    continue
 
                 session = Session()
-
 
                 existing_job = session.query(Job).filter(
                     Job.apply_url == link
                 ).first()
-
 
                 if existing_job:
 
@@ -106,7 +128,6 @@ def run_import():
                     session.close()
 
                     continue
-
 
                 new_job = Job(
 
@@ -126,13 +147,11 @@ def run_import():
 
                 )
 
-
                 session.add(new_job)
 
                 session.commit()
 
                 session.close()
-
 
                 print("--------------------")
 
@@ -151,23 +170,22 @@ def run_import():
                     source["name"]
                 )
 
-
         except Exception as e:
 
             print(
                 f"Import error: {e}"
             )
+
             session = Session()
 
             count = session.query(Job).count()
 
             print(
-            "Total jobs in database:",
-            count
+                "Total jobs in database:",
+                count
             )
 
             session.close()
-
 
     print("\nImport complete.")
 
