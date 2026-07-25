@@ -271,6 +271,18 @@ def run_import_test():
 
     run_import()
 
+    session = Session()
+
+    count = session.query(Job).count()
+
+    bayt_count = session.query(Job).filter(
+        Job.source == "Bayt"
+    ).count()
+
+    session.close()
+
     return {
-        "status": "import complete"
+        "status": "import complete",
+        "total_jobs": count,
+        "bayt_jobs": bayt_count
     }
