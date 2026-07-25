@@ -27,6 +27,7 @@ def run_import():
 
 
             for job in feed.entries:
+                print("PROCESSING JOB:", job.get("title"))
 
                 title = job.get(
                     "title",
@@ -42,6 +43,7 @@ def run_import():
                     "description",
                     ""
                 )
+                print("DESCRIPTION START:", description[:200])
 
                 category = job.get(
                     "category",
