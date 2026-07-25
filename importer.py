@@ -150,6 +150,16 @@ def run_import():
             print(
                 f"Import error: {e}"
             )
+            session = Session()
+
+count = session.query(Job).count()
+
+print(
+    "Total jobs in database:",
+    count
+)
+
+session.close()
 
 
     print("\nImport complete.")
