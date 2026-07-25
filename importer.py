@@ -152,14 +152,14 @@ def run_import():
             )
             session = Session()
 
-count = session.query(Job).count()
+            count = session.query(Job).count()
 
-print(
-    "Total jobs in database:",
-    count
-)
+            print(
+            "Total jobs in database:",
+            count
+            )
 
-session.close()
+            session.close()
 
 
     print("\nImport complete.")
