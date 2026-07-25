@@ -73,12 +73,12 @@ def run_import():
 
                 if not allowed_country(country):
 
-                   print(
-                   "SKIPPED COUNTRY VALUE:",
-                   repr(country)
-                )
+    print(
+        "SKIPPED COUNTRY VALUE:",
+        repr(country)
+    )
 
-                continue
+    continue
 
 
                 session = Session()
