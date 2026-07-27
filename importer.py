@@ -62,7 +62,7 @@ def run_import():
             print("RESPONSE LENGTH:", len(response.text))
             print("RESPONSE START:", response.text[:500])
             
-           feed = feedparser.parse(response.text)
+            feed = feedparser.parse(response.text)
 
 
             print(
