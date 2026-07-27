@@ -3,7 +3,7 @@ SOURCES = [
     {
         "name": "Aramco",
         "type": "HTML",
-        "url": "https://careers.aramco.com/services/rss/category/?catid=7717923",
+        "url": "https://careers.aramco.com/expat_uk/go/For-European-Candidates/7717923",
         "active": True
     }
 
