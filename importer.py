@@ -66,7 +66,7 @@ def run_import():
             print("RESPONSE START:", response.text[:500])
             
             if source["type"] == "rss":
-
+                
     feed = feedparser.parse(response.text)
 
     jobs = []
