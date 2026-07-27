@@ -4,3 +4,4 @@ uvicorn
 sqlalchemy
 requests
 feedparser
+beautifulsoup4
