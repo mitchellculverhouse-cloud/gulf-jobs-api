@@ -26,7 +26,7 @@ def run_import():
         )
 
 
-        try:
+                try:
 
             response = requests.get(
 
@@ -62,99 +62,135 @@ def run_import():
                 continue
 
 
-            print("RESPONSE LENGTH:", len(response.text))
-            print("RESPONSE START:", response.text[:500])
-
-if source["type"] == "rss":
-
-    feed = feedparser.parse(response.text)
-
-    jobs = []
-
-    for item in feed.entries:
-        jobs.append({
-            "title": item.get("title", ""),
-            "link": item.get("link", ""),
-            "description": item.get("description", ""),
-            "location": "",
-            "department": ""
-        })
-
-
-elif source["type"] == "html":
-
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser"
-    )
-
-    jobs = []
-
-    rows = soup.select(
-        "tr.data-row"
-    )
-
-    print(
-        "HTML jobs found:",
-        len(rows)
-    )
-
-    for row in rows:
-
-        title_element = row.select_one(
-            "a.jobTitle-link"
-        )
-
-        if not title_element:
-            continue
-
-
-        location_element = row.select_one(
-            ".jobLocation"
-        )
-
-        department_element = row.select_one(
-            ".jobDepartment"
-        )
-
-
-        jobs.append({
-
-            "title": title_element.get_text(strip=True),
-
-            "link": urljoin(
-                source["url"],
-                title_element["href"]
-            ),
-
-            "description": "",
-
-            "location": (
-                location_element.get_text(strip=True)
-                if location_element
-                else ""
-            ),
-
-            "department": (
-                department_element.get_text(strip=True)
-                if department_element
-                else ""
+            print(
+                "RESPONSE LENGTH:",
+                len(response.text)
             )
-        })
+
+            print(
+                "RESPONSE START:",
+                response.text[:500]
+            )
 
 
-else:
+            if source["type"] == "rss":
 
-    print(
-        "Unknown source type:",
-        source["type"]
-    )
+                feed = feedparser.parse(
+                    response.text
+                )
 
-    continue
+                jobs = []
+
+                for item in feed.entries:
+
+                    jobs.append({
+
+                        "title": item.get(
+                            "title",
+                            ""
+                        ),
+
+                        "link": item.get(
+                            "link",
+                            ""
+                        ),
+
+                        "description": item.get(
+                            "description",
+                            ""
+                        ),
+
+                        "location": "",
+
+                        "department": ""
+
+                    })
+
+
+            elif source["type"] == "html":
+
+                soup = BeautifulSoup(
+                    response.text,
+                    "html.parser"
+                )
+
+
+                jobs = []
+
+
+                rows = soup.select(
+                    "tr.data-row"
+                )
+
+
+                print(
+                    "HTML jobs found:",
+                    len(rows)
+                )
+
+
+                for row in rows:
+
+                    title_element = row.select_one(
+                        "a.jobTitle-link"
+                    )
+
+
+                    if not title_element:
+
+                        continue
+
+
+                    location_element = row.select_one(
+                        ".jobLocation"
+                    )
+
+
+                    department_element = row.select_one(
+                        ".jobDepartment"
+                    )
+
+
+                    jobs.append({
+
+                        "title": title_element.get_text(
+                            strip=True
+                        ),
+
+                        "link": urljoin(
+                            source["url"],
+                            title_element["href"]
+                        ),
+
+                        "description": "",
+
+                        "location": (
+                            location_element.get_text(strip=True)
+                            if location_element
+                            else ""
+                        ),
+
+                        "department": (
+                            department_element.get_text(strip=True)
+                            if department_element
+                            else ""
+                        )
+
+                    })
+
+
+            else:
+
+                print(
+                    "Unknown source type:",
+                    source["type"]
+                )
+
+                continue
 
 
 
-for job in jobs:
+            for job in jobs:
 
 
                 title = job.get(
