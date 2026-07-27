@@ -10,17 +10,16 @@ def run_import():
 
     print("Starting import...")
 
-
     for source in SOURCES:
 
         if not source["active"]:
             continue
 
-
         print(
             f"\nProcessing source: {source['name']}"
         )
 
+        session = None
 
         try:
 
@@ -28,35 +27,30 @@ def run_import():
                 source["url"]
             )
 
-
             print(
                 "Feed title:",
                 feed.feed.get("title")
             )
 
-
             print(
-                "Jobs found:",
+                "Feed entries:",
                 len(feed.entries)
             )
 
 
-            for job in feed.entries:
+            for item in feed.entries:
 
-
-                title = job.get(
+                title = item.get(
                     "title",
                     ""
                 )
 
-
-                link = job.get(
+                link = item.get(
                     "link",
                     ""
                 )
 
-
-                description = job.get(
+                description = item.get(
                     "description",
                     ""
                 )
@@ -71,24 +65,21 @@ def run_import():
                 if not title or not link:
 
                     print(
-                        "Skipped missing title/link"
+                        "Skipped - missing title or link"
                     )
 
                     continue
 
 
-
                 session = Session()
 
 
-
-                existing_job = session.query(Job).filter(
+                exists = session.query(Job).filter(
                     Job.apply_url == link
                 ).first()
 
 
-
-                if existing_job:
+                if exists:
 
                     print(
                         "Duplicate skipped:",
@@ -98,7 +89,6 @@ def run_import():
                     session.close()
 
                     continue
-
 
 
                 new_job = Job(
@@ -158,9 +148,7 @@ def run_import():
                     new_job
                 )
 
-
                 session.commit()
-
 
                 session.close()
 
@@ -171,14 +159,16 @@ def run_import():
                 )
 
 
-
         except Exception as e:
-
 
             print(
                 "Import error:",
                 e
             )
+
+            if session:
+
+                session.close()
 
 
     print(
@@ -186,7 +176,5 @@ def run_import():
     )
 
 
-
 if __name__ == "__main__":
-
     run_import()
