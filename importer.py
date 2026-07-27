@@ -25,8 +25,7 @@ def run_import():
             f"\nProcessing source: {source['name']}"
         )
 
-
-                try:
+    try:
 
             response = requests.get(
 
