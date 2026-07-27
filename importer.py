@@ -43,7 +43,6 @@ def run_import():
                 response.status_code
             )
 
-
             print(
                 "CONTENT TYPE:",
                 response.headers.get("content-type")
@@ -60,10 +59,9 @@ def run_import():
                 continue
 
 
-
-           print("RESPONSE LENGTH:", len(response.text))
-           print("RESPONSE START:", response.text[:500])
-
+            print("RESPONSE LENGTH:", len(response.text))
+            print("RESPONSE START:", response.text[:500])
+            
            feed = feedparser.parse(response.text)
 
 
