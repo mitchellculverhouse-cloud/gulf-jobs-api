@@ -1,9 +1,9 @@
 SOURCES = [
 
     {
-        "name": "Bayt",
-        "type": "xml",
-        "url": "https://www.bayt.com/rss/",
+        "name": "Aramco",
+        "type": "rss",
+        "url": "https://careers.aramco.com/services/rss/category/?catid=7717923",
         "active": True
     }
 
