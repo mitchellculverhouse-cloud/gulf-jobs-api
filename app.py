@@ -263,7 +263,7 @@ def get_jobs(
         "limit": limit,
         "results": results
     }
-    from importer import run_import
+   
 
 
 @app.get("/run-import")
@@ -275,14 +275,9 @@ def run_import_test():
 
     count = session.query(Job).count()
 
-    bayt_count = session.query(Job).filter(
-        Job.source == "Bayt"
-    ).count()
-
     session.close()
 
     return {
         "status": "import complete",
-        "total_jobs": count,
-        "bayt_jobs": bayt_count
+        "total_jobs": count
     }
