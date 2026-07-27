@@ -1,3 +1,4 @@
+import requests
 import feedparser
 
 from sources import SOURCES
@@ -10,27 +11,66 @@ def run_import():
 
     print("Starting import...")
 
+
     for source in SOURCES:
 
         if not source["active"]:
             continue
 
+
         print(
             f"\nProcessing source: {source['name']}"
         )
 
-        session = None
 
         try:
 
-            feed = feedparser.parse(
-                source["url"]
+            response = requests.get(
+
+                source["url"],
+
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                },
+
+                timeout=120
+
             )
+
+
+            print(
+                "HTTP STATUS:",
+                response.status_code
+            )
+
+
+            print(
+                "CONTENT TYPE:",
+                response.headers.get("content-type")
+            )
+
+
+            if response.status_code != 200:
+
+                print(
+                    "SOURCE FAILED:",
+                    source["name"]
+                )
+
+                continue
+
+
+
+            feed = feedparser.parse(
+                response.text
+            )
+
 
             print(
                 "Feed title:",
                 feed.feed.get("title")
             )
+
 
             print(
                 "Feed entries:",
@@ -38,19 +78,32 @@ def run_import():
             )
 
 
-            for item in feed.entries:
+            if len(feed.entries) == 0:
 
-                title = item.get(
+                print(
+                    "No jobs found"
+                )
+
+                continue
+
+
+
+            for job in feed.entries:
+
+
+                title = job.get(
                     "title",
                     ""
                 )
 
-                link = item.get(
+
+                link = job.get(
                     "link",
                     ""
                 )
 
-                description = item.get(
+
+                description = job.get(
                     "description",
                     ""
                 )
@@ -65,21 +118,23 @@ def run_import():
                 if not title or not link:
 
                     print(
-                        "Skipped - missing title or link"
+                        "Skipped missing title/link"
                     )
 
                     continue
 
 
+
                 session = Session()
 
 
-                exists = session.query(Job).filter(
+                existing_job = session.query(Job).filter(
                     Job.apply_url == link
                 ).first()
 
 
-                if exists:
+
+                if existing_job:
 
                     print(
                         "Duplicate skipped:",
@@ -89,6 +144,7 @@ def run_import():
                     session.close()
 
                     continue
+
 
 
                 new_job = Job(
@@ -148,7 +204,9 @@ def run_import():
                     new_job
                 )
 
+
                 session.commit()
+
 
                 session.close()
 
@@ -159,16 +217,28 @@ def run_import():
                 )
 
 
+
+        except requests.exceptions.Timeout:
+
+            print(
+                "TIMEOUT:",
+                source["name"]
+            )
+
+            continue
+
+
+
         except Exception as e:
 
             print(
                 "Import error:",
+                source["name"],
                 e
             )
 
-            if session:
+            continue
 
-                session.close()
 
 
     print(
@@ -176,5 +246,7 @@ def run_import():
     )
 
 
+
 if __name__ == "__main__":
+
     run_import()
