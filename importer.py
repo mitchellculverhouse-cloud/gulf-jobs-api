@@ -6,6 +6,9 @@ from sources import SOURCES
 from database import Session
 from models import Job
 
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+
 
 def run_import():
 
@@ -62,32 +65,96 @@ def run_import():
             print("RESPONSE LENGTH:", len(response.text))
             print("RESPONSE START:", response.text[:500])
             
-            feed = feedparser.parse(response.text)
+            if source["type"] == "rss":
+
+    feed = feedparser.parse(response.text)
+
+    jobs = []
+
+    for item in feed.entries:
+        jobs.append({
+            "title": item.get("title", ""),
+            "link": item.get("link", ""),
+            "description": item.get("description", ""),
+            "location": "",
+            "department": ""
+        })
 
 
-            print(
-                "Feed title:",
-                feed.feed.get("title")
+elif source["type"] == "html":
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
+
+    jobs = []
+
+    rows = soup.select(
+        "tr.data-row"
+    )
+
+    print(
+        "HTML jobs found:",
+        len(rows)
+    )
+
+    for row in rows:
+
+        title_element = row.select_one(
+            "a.jobTitle-link"
+        )
+
+        if not title_element:
+            continue
+
+
+        location_element = row.select_one(
+            ".jobLocation"
+        )
+
+        department_element = row.select_one(
+            ".jobDepartment"
+        )
+
+
+        jobs.append({
+
+            "title": title_element.get_text(strip=True),
+
+            "link": urljoin(
+                source["url"],
+                title_element["href"]
+            ),
+
+            "description": "",
+
+            "location": (
+                location_element.get_text(strip=True)
+                if location_element
+                else ""
+            ),
+
+            "department": (
+                department_element.get_text(strip=True)
+                if department_element
+                else ""
             )
+        })
 
 
-            print(
-                "Feed entries:",
-                len(feed.entries)
-            )
+else:
 
+    print(
+        "Unknown source type:",
+        source["type"]
+    )
 
-            if len(feed.entries) == 0:
-
-                print(
-                    "No jobs found"
-                )
-
-                continue
+    continue
 
 
 
-            for job in feed.entries:
+for job in jobs:
 
 
                 title = job.get(
