@@ -2,7 +2,7 @@ SOURCES = [
 
     {
         "name": "Aramco",
-        "type": "rss",
+        "type": "HTML",
         "url": "https://careers.aramco.com/services/rss/category/?catid=7717923",
         "active": True
     }
