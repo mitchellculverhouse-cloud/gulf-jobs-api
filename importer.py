@@ -112,6 +112,10 @@ def run_import():
                     response.text,
                     "html.parser"
                 )
+                print("LINK COUNT:", len(soup.find_all("a", href=True)))
+
+                for a in soup.find_all("a", href=True)[:20]:
+                print(a.get_text(strip=True), a["href"])
 
 
                 jobs = []
