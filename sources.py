@@ -2,8 +2,8 @@ SOURCES = [
 
     {
     "name": "WUZZUF",
-    "type": "rss",
-    "url": "https://wuzzuf.net/all-jobs.xml",
+    "type": "html",
+    "url": "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia",
     "active": True
 }
 
