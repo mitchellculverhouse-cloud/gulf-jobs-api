@@ -162,7 +162,7 @@ def run_import():
                     "HTML jobs found:",
                     len(jobs)
                 )
-                            else:
+            else:
 
                 print(
                     "Unknown source type:",
