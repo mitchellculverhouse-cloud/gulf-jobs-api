@@ -106,7 +106,7 @@ def run_import():
                     })
 
 
-            elif source["type"] == "html":
+                        elif source["type"] == "html":
 
                 soup = BeautifulSoup(
                     response.text,
@@ -124,46 +124,45 @@ def run_import():
                         a["href"]
                     )
 
-                        jobs = []
+                jobs = []
 
-            for a in soup.find_all("a", href=True):
+                for a in soup.find_all("a", href=True):
 
-                href = a["href"]
+                    href = a["href"]
 
-                if "/jobs/p/" in href:
+                    if "/jobs/p/" in href:
 
-                    title = a.get_text(
-                        strip=True
-                    )
+                        title = a.get_text(
+                            strip=True
+                        )
 
-                    if not title:
+                        if not title:
 
-                        continue
+                            continue
+
+                        jobs.append({
+
+                            "title": title,
+
+                            "link": urljoin(
+                                source["url"],
+                                href
+                            ),
+
+                            "description": "",
+
+                            "location": "",
+
+                            "department": ""
+
+                        })
 
 
-                    jobs.append({
-
-                        "title": title,
-
-                        "link": urljoin(
-                            source["url"],
-                            href
-                        ),
-
-                        "description": "",
-
-                        "location": "",
-
-                        "department": ""
-
-                    })
-
-
-            print(
-                "HTML jobs found:",
-                len(jobs)
-            )
-
+                print(
+                    "HTML jobs found:",
+                    len(jobs)
+                )
+                
             else:
 
                 print(
