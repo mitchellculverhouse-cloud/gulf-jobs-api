@@ -124,69 +124,45 @@ def run_import():
                         a["href"]
                     )
 
-                jobs = []
+                                jobs = []
+
+                for a in soup.find_all("a", href=True):
+
+                    href = a["href"]
+
+                    if "/jobs/p/" in href:
+
+                        title = a.get_text(
+                            strip=True
+                        )
+
+                        if not title:
+
+                            continue
 
 
-                rows = soup.select(
-                    "tr.data-row"
-                )
+                        jobs.append({
+
+                            "title": title,
+
+                            "link": urljoin(
+                                source["url"],
+                                href
+                            ),
+
+                            "description": "",
+
+                            "location": "",
+
+                            "department": ""
+
+                        })
 
 
                 print(
                     "HTML jobs found:",
-                    len(rows)
+                    len(jobs)
                 )
-
-
-                for row in rows:
-
-                    title_element = row.select_one(
-                        "a.jobTitle-link"
-                    )
-
-
-                    if not title_element:
-
-                        continue
-
-
-                    location_element = row.select_one(
-                        ".jobLocation"
-                    )
-
-
-                    department_element = row.select_one(
-                        ".jobDepartment"
-                    )
-
-
-                    jobs.append({
-
-                        "title": title_element.get_text(
-                            strip=True
-                        ),
-
-                        "link": urljoin(
-                            source["url"],
-                            title_element["href"]
-                        ),
-
-                        "description": "",
-
-                        "location": (
-                            location_element.get_text(strip=True)
-                            if location_element
-                            else ""
-                        ),
-
-                        "department": (
-                            department_element.get_text(strip=True)
-                            if department_element
-                            else ""
-                        )
-
-                    })
-
 
             else:
 
