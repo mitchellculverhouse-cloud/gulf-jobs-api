@@ -126,7 +126,7 @@ def run_import():
 
             jobs = []
 
-                for a in soup.find_all("a", href=True):
+            for a in soup.find_all("a", href=True):
 
                     href = a["href"]
 
