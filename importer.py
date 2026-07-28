@@ -106,17 +106,23 @@ def run_import():
                     })
 
 
-            elif source["type"] == "html":
+                        elif source["type"] == "html":
 
                 soup = BeautifulSoup(
                     response.text,
                     "html.parser"
                 )
-                print("LINK COUNT:", len(soup.find_all("a", href=True)))
 
-                    for a in soup.find_all("a", href=True)[:20]:
-                    print(a.get_text(strip=True), a["href"])
+                print(
+                    "LINK COUNT:",
+                    len(soup.find_all("a", href=True))
+                )
 
+                for a in soup.find_all("a", href=True)[:20]:
+                    print(
+                        a.get_text(strip=True),
+                        a["href"]
+                    )
 
                 jobs = []
 
