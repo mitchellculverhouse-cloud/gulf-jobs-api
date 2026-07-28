@@ -105,7 +105,8 @@ def run_import():
 
                     })
 
-    elif source["type"] == "html":
+
+            elif source["type"] == "html":
 
                 soup = BeautifulSoup(
                     response.text,
@@ -161,8 +162,7 @@ def run_import():
                     "HTML jobs found:",
                     len(jobs)
                 )
-                
-            else:
+                            else:
 
                 print(
                     "Unknown source type:",
