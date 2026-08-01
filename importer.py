@@ -5,6 +5,7 @@ from collections import Counter
 
 import requests
 from bs4 import BeautifulSoup
+from sqlalchemy.exc import IntegrityError
 from urllib.parse import unquote, urlsplit
 
 from database import Session
@@ -440,20 +441,23 @@ def _should_enrich(field, existing, scraped):
             and not _historical_company_placeholder(scraped))
 
 
+def _enrich_job(job, values):
+    changed = False
+    for field in JOB_FIELDS:
+        scraped = values.get(field)
+        if _should_enrich(field, getattr(job, field), scraped):
+            setattr(job, field, scraped)
+            changed = True
+    return changed
+
+
 def save_job(db, values):
     target_url = canonical_url(values["apply_url"])
     values["apply_url"] = target_url
-    matches = [job for job in db.query(Job).filter(Job.apply_url.isnot(None)).order_by(Job.id).all()
-               if canonical_url(job.apply_url) == target_url]
-    duplicate_count = max(0, len(matches) - 1)
-    if matches:
-        job = matches[0]
-        changed = False
-        for field in JOB_FIELDS:
-            scraped = values.get(field)
-            if _should_enrich(field, getattr(job, field), scraped):
-                setattr(job, field, scraped)
-                changed = True
+    job = db.query(Job).filter(Job.apply_url == target_url).first()
+    duplicate_count = 0
+    if job:
+        changed = _enrich_job(job, values)
         if changed:
             try:
                 db.commit()
@@ -466,6 +470,19 @@ def save_job(db, values):
     db.add(job)
     try:
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        job = db.query(Job).filter(Job.apply_url == target_url).first()
+        if job is None:
+            raise
+        if _enrich_job(job, values):
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            return "updated", duplicate_count
+        return "unchanged", duplicate_count
     except Exception:
         db.rollback()
         raise

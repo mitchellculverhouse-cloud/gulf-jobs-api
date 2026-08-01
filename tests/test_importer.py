@@ -3,6 +3,7 @@ import pathlib
 import pytest
 import requests
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 import importer
@@ -192,7 +193,7 @@ def test_placeholder_employer_is_not_meaningful(company_name):
 
 def test_existing_record_is_enriched_without_overwriting_useful_values(db_factory):
     db = db_factory()
-    db.add(Job(title="Original title", apply_url="https://WUZZUF.net/jobs/p/alpha/?ref=old", description="Keep me", company_name=""))
+    db.add(Job(title="Original title", apply_url="https://wuzzuf.net/jobs/p/alpha", description="Keep me", company_name=""))
     db.commit()
     outcome, duplicates = importer.save_job(db, {"title": "Scraped title", "apply_url": "https://wuzzuf.net/jobs/p/alpha", "description": "Replacement", "company_name": "Actual Employer", "source": "WUZZUF"})
     saved = db.query(Job).one()
@@ -207,7 +208,7 @@ def test_existing_record_is_enriched_without_overwriting_useful_values(db_factor
 def test_live_detail_enriches_incomplete_existing_row_without_duplicate(db_factory):
     db = db_factory()
     url = "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
-    db.add(Job(title="Office Coordinator", apply_url=f"{url}?ref=listing", source="WUZZUF"))
+    db.add(Job(title="Office Coordinator", apply_url=url, source="WUZZUF"))
     db.commit()
     original_id = db.query(Job).one().id
     values = importer.parse_wuzzuf_detail(
@@ -225,7 +226,7 @@ def test_arabic_detail_replaces_placeholder_in_incomplete_existing_row(db_factor
     db = db_factory()
     url = "https://wuzzuf.net/ar/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
     db.add(Job(
-        title="Office Coordinator", apply_url=f"{url}?ref=listing", source="WUZZUF",
+        title="Office Coordinator", apply_url=url, source="WUZZUF",
         country="Saudi Arabia", city="Riyadh", job_type="Full Time", work_mode="On-site",
         description="-", company_name="",
     ))
@@ -263,16 +264,105 @@ def test_historical_wuzzuf_company_placeholder_is_replaced(db_factory):
     db.close()
 
 
-def test_repeated_save_prevents_new_duplicate_and_reports_existing_duplicates(db_factory):
+def test_repeated_save_prevents_duplicate_and_returns_zero_duplicate_count(db_factory):
     db = db_factory()
     values = {"title": "Engineer", "apply_url": "https://wuzzuf.net/jobs/p/alpha", "source": "WUZZUF"}
-    assert importer.save_job(db, values)[0] == "inserted"
-    assert importer.save_job(db, values)[0] == "unchanged"
-    db.add(Job(title="Historic duplicate", apply_url=values["apply_url"]))
-    db.commit()
-    assert importer.save_job(db, values) == ("unchanged", 1)
-    assert db.query(Job).count() == 2
+    assert importer.save_job(db, values) == ("inserted", 0)
+    assert importer.save_job(db, values) == ("unchanged", 0)
+    assert db.query(Job).count() == 1
     db.close()
+
+
+def test_save_job_uses_database_filtered_lookup_without_loading_all(monkeypatch, db_factory):
+    db = db_factory()
+    db.add(Job(title="Engineer", apply_url="https://wuzzuf.net/jobs/p/alpha", source="WUZZUF"))
+    db.commit()
+
+    from sqlalchemy.orm import Query
+    monkeypatch.setattr(Query, "all", lambda self: pytest.fail("save_job must not load all jobs"))
+    assert importer.save_job(db, {
+        "title": "Engineer", "apply_url": "https://Wuzzuf.net/jobs/p/alpha/?ref=list",
+        "source": "WUZZUF",
+    }) == ("unchanged", 0)
+    db.close()
+
+
+class ConflictQuery:
+    def __init__(self, session):
+        self.session = session
+
+    def filter(self, *args):
+        return self
+
+    def first(self):
+        self.session.lookup_count += 1
+        return None if self.session.lookup_count == 1 else self.session.visible_job
+
+
+class ConflictSession:
+    def __init__(self, visible_job=None):
+        self.visible_job = visible_job
+        self.lookup_count = 0
+        self.rollbacks = 0
+        self.commits = 0
+
+    def query(self, model):
+        assert model is Job
+        return ConflictQuery(self)
+
+    def add(self, job):
+        self.pending = job
+
+    def commit(self):
+        self.commits += 1
+        raise IntegrityError("INSERT", {}, RuntimeError("simulated conflict"))
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+def test_concurrent_unique_conflict_is_recovered_as_unchanged():
+    existing = Job(title="Engineer", apply_url="https://wuzzuf.net/jobs/p/alpha", source="WUZZUF")
+    db = ConflictSession(visible_job=existing)
+    assert importer.save_job(db, {
+        "title": "Engineer", "apply_url": "https://wuzzuf.net/jobs/p/alpha?listing=1",
+        "source": "WUZZUF",
+    }) == ("unchanged", 0)
+    assert db.rollbacks == 1
+    assert db.lookup_count == 2
+
+
+def test_concurrent_unique_conflict_can_enrich_visible_row():
+    existing = Job(title="Engineer", apply_url="https://wuzzuf.net/jobs/p/alpha",
+                   description="-", company_name="WUZZUF", source="WUZZUF")
+    db = ConflictSession(visible_job=existing)
+
+    def successful_second_commit():
+        db.commits += 1
+        if db.commits == 1:
+            raise IntegrityError("INSERT", {}, RuntimeError("simulated conflict"))
+
+    db.commit = successful_second_commit
+    assert importer.save_job(db, {
+        "title": "Engineer", "apply_url": existing.apply_url,
+        "description": "Genuine description", "company_name": "Actual Employer",
+        "source": "WUZZUF",
+    }) == ("updated", 0)
+    assert existing.description == "Genuine description"
+    assert existing.company_name == "Actual Employer"
+    assert db.rollbacks == 1
+    assert db.commits == 2
+
+
+def test_unrelated_integrity_error_is_rolled_back_and_reraised():
+    db = ConflictSession(visible_job=None)
+    with pytest.raises(IntegrityError):
+        importer.save_job(db, {
+            "title": "Engineer", "apply_url": "https://wuzzuf.net/jobs/p/alpha",
+            "source": "WUZZUF",
+        })
+    assert db.rollbacks == 1
+    assert db.lookup_count == 2
 
 
 def test_detail_failure_isolated_and_outcomes_counted(monkeypatch, db_factory):
