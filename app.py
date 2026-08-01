@@ -1,10 +1,68 @@
-from fastapi import FastAPI
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Annotated, Optional
+
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import or_
-from datetime import datetime, timedelta
+from sqlalchemy import Numeric, case, cast, func, or_
+
 from database import Session, init_db
 from importer import run_import
 from models import Job
+from schemas import PaginatedJobsResponse
+
+
+LIKE_ESCAPE = "\\"
+
+
+class JobSort(str, Enum):
+    newest = "newest"
+    oldest = "oldest"
+    highest_salary = "highest_salary"
+    lowest_salary = "lowest_salary"
+
+
+def escaped_contains(value: Optional[str]) -> Optional[str]:
+    """Return a trimmed, escaped pattern for a literal substring search."""
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    value = value.replace(LIKE_ESCAPE, LIKE_ESCAPE * 2)
+    value = value.replace("%", LIKE_ESCAPE + "%")
+    value = value.replace("_", LIKE_ESCAPE + "_")
+    return f"%{value}%"
+
+
+def trimmed(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def numeric_salary(column, dialect_name):
+    """Safely convert valid non-negative salary text to a numeric expression."""
+    value = func.trim(column)
+    if dialect_name == "postgresql":
+        valid = value.op("~")(r"^[0-9]+(\.[0-9]+)?$")
+    else:
+        valid = (
+            (value != "")
+            & ~value.op("GLOB")("*[^0-9.]*")
+            & ~value.op("GLOB")(".*")
+            & ~value.op("GLOB")("*.")
+            & ((func.length(value) - func.length(func.replace(value, ".", ""))) <= 1)
+        )
+    return case((valid, cast(value, Numeric)), else_=None)
+
+
+def utc_today():
+    return datetime.now(timezone.utc).date()
+
+
+def date_order(descending=True):
+    value = func.nullif(func.trim(Job.date_posted), "")
+    return (value.desc().nullslast() if descending else value.asc().nullslast())
 
 app = FastAPI()
 app.add_middleware(
@@ -22,114 +80,89 @@ def initialize_database():
     init_db()
 
 
-@app.get("/jobs")
+@app.get("/jobs", response_model=PaginatedJobsResponse)
 def get_jobs(
-    search: str = None,
+    search: Annotated[Optional[str], Query(max_length=200)] = None,
 
-    location: str = None,
+    location: Annotated[Optional[str], Query(max_length=100)] = None,
 
-    category: str = None,
-    industry: str = None,
+    category: Annotated[Optional[str], Query(max_length=100)] = None,
+    industry: Annotated[Optional[str], Query(max_length=100)] = None,
 
-    min_salary: int = None,
-    currency: str = None,
-    salary_period: str = None,
+    min_salary: Annotated[Optional[float], Query(ge=0)] = None,
+    currency: Annotated[Optional[str], Query(max_length=20)] = None,
+    salary_period: Annotated[Optional[str], Query(max_length=50)] = None,
 
-    job_type: str = None,
-    work_mode: str = None,
-    experience_level: str = None,
+    job_type: Annotated[Optional[str], Query(max_length=50)] = None,
+    work_mode: Annotated[Optional[str], Query(max_length=50)] = None,
+    experience_level: Annotated[Optional[str], Query(max_length=100)] = None,
 
-    nationality: str = None,
-    gender: str = None,
-    language: str = None,
+    nationality: Annotated[Optional[str], Query(max_length=100)] = None,
+    gender: Annotated[Optional[str], Query(max_length=50)] = None,
+    language: Annotated[Optional[str], Query(max_length=100)] = None,
 
     remote_only: bool = False,
     arabic_only: bool = False,
 
-    date_range: int = None,
+    date_range: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 
-    sort: str = "newest",
+    sort: JobSort = JobSort.newest,
 
-    page: int = 1,
-    limit: int = 25
+    page: Annotated[int, Query(ge=1, le=10000)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25
 ):
 
     with Session() as session:
         query = session.query(Job)
 
-        if search:
-            text = f"%{search}%"
-
+        text = escaped_contains(search)
+        if text:
             query = query.filter(
                 or_(
-                    Job.title.ilike(text),
-                    Job.description.ilike(text),
-                    Job.skills.ilike(text),
-                    Job.company_name.ilike(text)
+                    Job.title.ilike(text, escape=LIKE_ESCAPE),
+                    Job.description.ilike(text, escape=LIKE_ESCAPE),
+                    Job.skills.ilike(text, escape=LIKE_ESCAPE),
+                    Job.company_name.ilike(text, escape=LIKE_ESCAPE)
                 )
             )
 
-        if location:
-            text = f"%{location}%"
-
+        text = escaped_contains(location)
+        if text:
             query = query.filter(
                 or_(
-                    Job.country.ilike(text),
-                    Job.city.ilike(text),
-                    Job.area.ilike(text)
+                    Job.country.ilike(text, escape=LIKE_ESCAPE),
+                    Job.city.ilike(text, escape=LIKE_ESCAPE),
+                    Job.area.ilike(text, escape=LIKE_ESCAPE)
                 )
             )
 
-        if category:
-            query = query.filter(
-                Job.category.ilike(f"%{category}%")
-            )
+        for value, column in (
+            (category, Job.category),
+            (industry, Job.industry),
+            (currency, Job.salary_currency),
+            (salary_period, Job.salary_period),
+            (language, Job.languages_required),
+        ):
+            text = escaped_contains(value)
+            if text:
+                query = query.filter(column.ilike(text, escape=LIKE_ESCAPE))
 
-        if industry:
-            query = query.filter(
-                Job.industry.ilike(f"%{industry}%")
-            )
+        dialect_name = session.get_bind().dialect.name
+        salary_max = numeric_salary(Job.salary_max, dialect_name)
+        salary_min = numeric_salary(Job.salary_min, dialect_name)
+        if min_salary is not None:
+            query = query.filter(salary_max >= min_salary)
 
-        if currency:
-            query = query.filter(
-                Job.salary_currency.ilike(f"%{currency}%")
-            )
-
-        if salary_period:
-            query = query.filter(
-                Job.salary_period.ilike(f"%{salary_period}%")
-            )
-
-        if min_salary:
-            query = query.filter(
-                Job.salary_max >= str(min_salary)
-            )
-
-        if job_type:
-            query = query.filter(Job.job_type == job_type)
-
-        if work_mode:
-            query = query.filter(Job.work_mode == work_mode)
-
-        if experience_level:
-            query = query.filter(
-                Job.experience_level == experience_level
-            )
-
-        if nationality:
-            query = query.filter(
-                Job.nationality_required == nationality
-            )
-
-        if gender:
-            query = query.filter(
-                Job.gender_required == gender
-            )
-
-        if language:
-            query = query.filter(
-                Job.languages_required.ilike(f"%{language}%")
-            )
+        for value, column in (
+            (job_type, Job.job_type),
+            (work_mode, Job.work_mode),
+            (experience_level, Job.experience_level),
+            (nationality, Job.nationality_required),
+            (gender, Job.gender_required),
+        ):
+            value = trimmed(value)
+            if value:
+                query = query.filter(column == value)
 
         if remote_only:
             query = query.filter(
@@ -142,26 +175,23 @@ def get_jobs(
             )
 
         if date_range:
-            cutoff = datetime.now() - timedelta(days=date_range)
+            cutoff = utc_today() - timedelta(days=date_range)
+            query = query.filter(Job.date_posted >= cutoff.isoformat())
 
-            query = query.filter(
-                Job.date_posted >= cutoff.strftime("%Y-%m-%d")
-            )
+        total = query.count()
 
-        if sort == "highest_salary":
+        if sort == JobSort.highest_salary:
             query = query.order_by(
-                Job.salary_max.desc()
+                salary_max.desc().nullslast(), date_order(), Job.id.desc()
             )
-
-        elif sort == "lowest_salary":
+        elif sort == JobSort.lowest_salary:
             query = query.order_by(
-                Job.salary_min.asc()
+                salary_min.asc().nullslast(), date_order(), Job.id.desc()
             )
-
+        elif sort == JobSort.oldest:
+            query = query.order_by(date_order(False), Job.id.asc())
         else:
-            query = query.order_by(
-                Job.date_posted.desc()
-            )
+            query = query.order_by(date_order(), Job.id.desc())
 
         offset = (page - 1) * limit
 
@@ -172,53 +202,18 @@ def get_jobs(
             .all()
         )
 
-        results = []
-
-        for job in jobs:
-
-            results.append({
-
-                "id": job.id,
-
-                "title": job.title,
-                "description": job.description,
-                "skills": job.skills,
-
-                "country": job.country,
-                "city": job.city,
-                "area": job.area,
-
-                "company_name": job.company_name,
-
-                "category": job.category,
-                "industry": job.industry,
-
-                "salary_min": job.salary_min,
-                "salary_max": job.salary_max,
-                "salary_currency": job.salary_currency,
-                "salary_period": job.salary_period,
-
-                "job_type": job.job_type,
-                "work_mode": job.work_mode,
-                "experience_level": job.experience_level,
-
-                "nationality_required": job.nationality_required,
-                "gender_required": job.gender_required,
-                "arabic_required": job.arabic_required,
-                "languages_required": job.languages_required,
-
-                "date_posted": job.date_posted,
-                "closing_date": job.closing_date,
-
-                "apply_url": job.apply_url,
-                "source": job.source
-            })
-
-
+        total_pages = (total + limit - 1) // limit
         return {
             "page": page,
             "limit": limit,
-            "results": results
+            "total": total,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1 and total > 0,
+            "results": [
+                {column.name: getattr(job, column.name) for column in Job.__table__.columns}
+                for job in jobs
+            ],
         }
 
 
