@@ -2,17 +2,18 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Numeric, case, cast, func, or_
 
 from database import Session, init_db
 from importer import run_import
 from models import Job
-from schemas import PaginatedJobsResponse
+from schemas import JobResult, PaginatedJobsResponse
 
 
 LIKE_ESCAPE = "\\"
+JOB_RESULT_FIELDS = tuple(JobResult.model_fields)
 
 
 class JobSort(str, Enum):
@@ -38,6 +39,11 @@ def trimmed(value: Optional[str]) -> Optional[str]:
         return None
     value = value.strip()
     return value or None
+
+
+def job_to_dict(job: Job):
+    """Serialize only fields deliberately included in the public job contract."""
+    return {field: getattr(job, field) for field in JOB_RESULT_FIELDS}
 
 
 def numeric_salary(column, dialect_name):
@@ -210,11 +216,17 @@ def get_jobs(
             "total_pages": total_pages,
             "has_next": page < total_pages,
             "has_previous": page > 1 and total > 0,
-            "results": [
-                {column.name: getattr(job, column.name) for column in Job.__table__.columns}
-                for job in jobs
-            ],
+            "results": [job_to_dict(job) for job in jobs],
         }
+
+
+@app.get("/jobs/{job_id}", response_model=JobResult)
+def get_job(job_id: Annotated[int, Path(ge=1)]):
+    with Session() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job_to_dict(job)
 
 
 

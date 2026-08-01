@@ -235,3 +235,112 @@ def test_openapi_exposes_paginated_response_schema(session_factory):
     assert status == 200
     schema = body["paths"]["/jobs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert schema["$ref"].endswith("/PaginatedJobsResponse")
+
+
+def test_job_detail_returns_complete_exact_contract(session_factory):
+    values = {
+        "title": "مهندس برمجيات", "description": "First line\nالسطر الثاني",
+        "skills": "Python, العربية", "country": "Qatar", "city": "Doha",
+        "area": "West Bay", "company_name": "شركة الاختبار",
+        "category": "Engineering", "industry": "Technology",
+        "salary_min": "12000", "salary_max": "18000", "salary_currency": "QAR",
+        "salary_period": "Monthly", "job_type": "Full Time", "work_mode": "Hybrid",
+        "experience_level": "Senior", "nationality_required": "Any",
+        "gender_required": "Any", "arabic_required": "Yes",
+        "languages_required": "Arabic, English", "date_posted": "2026-08-01",
+        "closing_date": "2026-09-01", "apply_url": "https://example.test/apply/مهندس",
+        "source": "Test Source",
+    }
+    add_jobs(session_factory, values)
+
+    status, body = get("/jobs/1")
+
+    assert status == 200
+    assert set(body) == RESULT_FIELDS
+    assert body == {"id": 1, **values}
+    assert body["description"] == "First line\nالسطر الثاني"
+    assert body["apply_url"] == values["apply_url"]
+
+
+def test_job_detail_serializes_nullable_fields_as_null(session_factory):
+    nullable = {field: None for field in RESULT_FIELDS - {"id", "apply_url"}}
+    add_jobs(session_factory, nullable | {"apply_url": "https://example.test/nullable"})
+
+    status, body = get("/jobs/1")
+
+    assert status == 200
+    assert set(body) == RESULT_FIELDS
+    assert all(body[field] is None for field in nullable)
+
+
+def test_missing_job_detail_returns_exact_404(session_factory):
+    assert get("/jobs/999999") == (404, {"detail": "Job not found"})
+
+
+@pytest.mark.parametrize("path", ["/jobs/0", "/jobs/-1", "/jobs/not-a-number"])
+def test_job_detail_path_validation_returns_422(session_factory, path):
+    assert get(path)[0] == 422
+
+
+def test_job_detail_is_read_only(session_factory):
+    values = {"title": "Unchanged", "description": "Before\nبعد"}
+    add_jobs(session_factory, values)
+    with session_factory() as session:
+        before_count = session.query(Job).count()
+        before = {column.name: getattr(session.get(Job, 1), column.name)
+                  for column in Job.__table__.columns}
+
+    assert get("/jobs/1")[0] == 200
+
+    with session_factory() as session:
+        after_count = session.query(Job).count()
+        after = {column.name: getattr(session.get(Job, 1), column.name)
+                 for column in Job.__table__.columns}
+    assert after_count == before_count == 1
+    assert after == before
+
+
+@pytest.mark.parametrize(("path", "expected_status"), [("/jobs/1", 200), ("/jobs/2", 404)])
+def test_job_detail_closes_session(session_factory, monkeypatch, path, expected_status):
+    add_jobs(session_factory, {})
+    closed = []
+
+    class TrackingSession:
+        def __init__(self):
+            self.session = session_factory()
+
+        def __enter__(self):
+            return self.session
+
+        def __exit__(self, exception_type, exception, traceback):
+            self.session.close()
+            closed.append(True)
+
+    monkeypatch.setattr(app_module, "Session", TrackingSession)
+    assert get(path)[0] == expected_status
+    assert closed == [True]
+
+
+def test_list_route_regression_with_existing_parameters(session_factory):
+    add_jobs(session_factory, {"title": "Needle", "country": "UAE"})
+    status, body = get("/jobs", search="Needle", location="UAE", sort="newest", page=1, limit=10)
+    assert status == 200
+    assert set(body) == {
+        "page", "limit", "total", "total_pages", "has_next", "has_previous", "results"
+    }
+    assert set(body["results"][0]) == RESULT_FIELDS
+    assert get("/jobs", sort="invalid")[0] == 422
+
+
+def test_openapi_exposes_job_detail_contract(session_factory):
+    status, body = get("/openapi.json")
+    operation = body["paths"]["/jobs/{job_id}"]["get"]
+    parameter = operation["parameters"][0]
+    response = operation["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert status == 200
+    assert parameter["name"] == "job_id" and parameter["in"] == "path"
+    assert parameter["required"] is True
+    assert parameter["schema"]["type"] == "integer"
+    assert parameter["schema"]["minimum"] == 1
+    assert response["$ref"].endswith("/JobResult")
