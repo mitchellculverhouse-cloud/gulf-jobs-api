@@ -2,9 +2,9 @@ import json
 import time
 from collections import Counter
 
-import feedparser
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlsplit
 
 from database import Session
 from models import Job
@@ -24,6 +24,11 @@ JOB_FIELDS = (
     "nationality_required", "gender_required", "arabic_required",
     "languages_required", "date_posted", "closing_date", "apply_url", "source",
 )
+WUZZUF_HOSTS = {"wuzzuf.net", "www.wuzzuf.net"}
+
+
+class UnsupportedParserError(ValueError):
+    pass
 
 
 def _request(session, url, source):
@@ -45,14 +50,20 @@ def _request(session, url, source):
     response.raise_for_status()
 
 
+def _is_wuzzuf_job_url(url, allowed_hosts):
+    parts = urlsplit(url)
+    return (parts.hostname or "").lower() in allowed_hosts and "/jobs/p/" in parts.path
+
+
 def parse_wuzzuf_listing(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
     jobs = []
     seen = set()
+    allowed_hosts = WUZZUF_HOSTS
     for anchor in soup.find_all("a", href=True):
         try:
             url = canonical_url(anchor["href"], base_url)
-            if "/jobs/p/" not in urlsplit_path(url) or url in seen:
+            if not _is_wuzzuf_job_url(url, allowed_hosts) or url in seen:
                 continue
             title = clean_text(anchor.get_text(" ", strip=True))
             if not title:
@@ -67,20 +78,15 @@ def parse_wuzzuf_listing(html, base_url):
 def count_wuzzuf_listing_links(html, base_url):
     count = 0
     soup = BeautifulSoup(html, "html.parser")
+    allowed_hosts = WUZZUF_HOSTS
     for anchor in soup.find_all("a", href=True):
         try:
             url = canonical_url(anchor["href"], base_url)
-            if "/jobs/p/" in urlsplit_path(url) and clean_text(anchor.get_text(" ", strip=True)):
+            if _is_wuzzuf_job_url(url, allowed_hosts) and clean_text(anchor.get_text(" ", strip=True)):
                 count += 1
         except (KeyError, TypeError, ValueError):
             continue
     return count
-
-
-def urlsplit_path(url):
-    from urllib.parse import urlsplit
-    return urlsplit(url).path
-
 
 def _walk(value):
     if isinstance(value, dict):
@@ -234,6 +240,19 @@ def _missing(value):
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+def _historical_company_placeholder(value):
+    return isinstance(value, str) and value.strip().casefold() == "wuzzuf"
+
+
+def _should_enrich(field, existing, scraped):
+    if _missing(scraped):
+        return False
+    if _missing(existing):
+        return True
+    return (field == "company_name" and _historical_company_placeholder(existing)
+            and not _historical_company_placeholder(scraped))
+
+
 def save_job(db, values):
     target_url = canonical_url(values["apply_url"])
     values["apply_url"] = target_url
@@ -245,17 +264,40 @@ def save_job(db, values):
         changed = False
         for field in JOB_FIELDS:
             scraped = values.get(field)
-            if _missing(getattr(job, field)) and not _missing(scraped):
+            if _should_enrich(field, getattr(job, field), scraped):
                 setattr(job, field, scraped)
                 changed = True
         if changed:
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
             return "updated", duplicate_count
         return "unchanged", duplicate_count
     job = Job(**{field: values.get(field) for field in JOB_FIELDS})
     db.add(job)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return "inserted", duplicate_count
+
+
+def dispatch_listing_parser(source, html):
+    parser_identity = source.get("listing_parser")
+    if parser_identity == "wuzzuf":
+        return (parse_wuzzuf_listing(html, source["url"]),
+                count_wuzzuf_listing_links(html, source["url"]))
+    raise UnsupportedParserError(f"Unsupported listing parser: {parser_identity!r}")
+
+
+def get_detail_parser(source):
+    parser_identity = source.get("detail_parser")
+    if parser_identity == "wuzzuf":
+        return parse_wuzzuf_detail
+    raise UnsupportedParserError(f"Unsupported detail parser: {parser_identity!r}")
 
 
 def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
@@ -269,27 +311,21 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
         print(f"Processing source: {source['name']}")
         try:
             response = _request(http, source["url"], source)
-            if source.get("type") == "rss":
-                entries = feedparser.parse(response.text).entries
-                jobs = [{"title": clean_text(item.get("title")), "link": canonical_url(item.get("link"), source["url"])} for item in entries]
-                jobs = [job for job in jobs if job["title"] and job["link"]]
-            elif source.get("listing_parser") == "wuzzuf" or source.get("type") == "html":
-                jobs = parse_wuzzuf_listing(response.text, source["url"])
-                totals["listing_links_found"] += count_wuzzuf_listing_links(response.text, source["url"])
-            else:
-                print(f"Unknown source type: {source.get('type')}")
-                continue
+            jobs, listing_count = dispatch_listing_parser(source, response.text)
+            detail_parser = get_detail_parser(source)
+            totals["listing_links_found"] += listing_count
+        except UnsupportedParserError as exc:
+            print(f"Source skipped: {source['name']}: {exc}")
+            continue
         except Exception as exc:
             print(f"Source failed: {source['name']}: {exc}")
             continue
-        if source.get("type") == "rss":
-            totals["listing_links_found"] += len(jobs)
         unique = {job["link"]: job for job in jobs}
         totals["unique_job_urls"] += len(unique)
         for index, job in enumerate(unique.values()):
             try:
                 detail = _request(http, job["link"], source)
-                values = parse_wuzzuf_detail(detail.text, job["link"], source)
+                values = detail_parser(detail.text, job["link"], source)
                 if not values.get("title"):
                     values["title"] = job["title"]
                 db = session_factory()
