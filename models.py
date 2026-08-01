@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Column, Index, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -6,6 +6,9 @@ Base = declarative_base()
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index("uq_jobs_apply_url", "apply_url", unique=True),
+    )
 
     id = Column(Integer, primary_key=True)
 
@@ -39,5 +42,5 @@ class Job(Base):
     date_posted = Column(String)
     closing_date = Column(String)
 
-    apply_url = Column(String)
+    apply_url = Column(String, nullable=False)
     source = Column(String)
