@@ -21,7 +21,7 @@ RESULT_FIELDS = {
 }
 
 
-async def _asgi_get(path, params=None):
+async def _asgi_request(path, method="GET", params=None, headers=None):
     messages = []
     query_string = urlencode(params or {}, doseq=True).encode()
     sent = False
@@ -38,9 +38,11 @@ async def _asgi_get(path, params=None):
 
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "GET", "scheme": "http", "path": path,
+        "method": method, "scheme": "http", "path": path,
         "raw_path": path.encode(), "query_string": query_string,
-        "headers": [], "client": ("test", 123), "server": ("test", 80),
+        "headers": [(name.lower().encode(), value.encode())
+                    for name, value in (headers or {}).items()],
+        "client": ("test", 123), "server": ("test", 80),
         "root_path": "",
     }
     await app_module.app(scope, receive, send)
@@ -52,7 +54,11 @@ async def _asgi_get(path, params=None):
 
 
 def get(path="/jobs", **params):
-    return asyncio.run(_asgi_get(path, params))
+    return asyncio.run(_asgi_request(path, params=params))
+
+
+def post(path, headers=None, **params):
+    return asyncio.run(_asgi_request(path, method="POST", params=params, headers=headers))
 
 
 @pytest.fixture
@@ -344,3 +350,127 @@ def test_openapi_exposes_job_detail_contract(session_factory):
     assert parameter["schema"]["type"] == "integer"
     assert parameter["schema"]["minimum"] == 1
     assert response["$ref"].endswith("/JobResult")
+
+
+def test_health_executes_select_one_and_closes_session(session_factory, monkeypatch):
+    events = []
+
+    class TrackingSession:
+        def __init__(self):
+            self.session = session_factory()
+
+        def execute(self, statement):
+            events.append(str(statement))
+            return self.session.execute(statement)
+
+        def close(self):
+            self.session.close()
+            events.append("closed")
+
+    monkeypatch.setattr(app_module, "Session", TrackingSession)
+
+    assert get("/health") == (200, {"status": "ok"})
+    assert events == ["SELECT 1", "closed"]
+
+
+def test_health_failure_is_generic_and_closes_session(monkeypatch):
+    events = []
+
+    class FailingSession:
+        def execute(self, statement):
+            events.append(str(statement))
+            raise RuntimeError("secret database hostname")
+
+        def close(self):
+            events.append("closed")
+
+    monkeypatch.setattr(app_module, "Session", FailingSession)
+
+    assert get("/health") == (503, {"detail": "Database unavailable"})
+    assert events == ["SELECT 1", "closed"]
+
+
+def test_import_requires_server_configuration(monkeypatch):
+    monkeypatch.delenv("IMPORT_API_KEY", raising=False)
+    assert post("/run-import") == (
+        503, {"detail": "Import endpoint is not configured"}
+    )
+
+
+@pytest.mark.parametrize("headers", [None, {"X-Import-Key": ""}, {"X-Import-Key": "wrong"}])
+def test_import_rejects_missing_empty_or_incorrect_key(monkeypatch, headers):
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    assert post("/run-import", headers=headers) == (401, {"detail": "Invalid import key"})
+
+
+def test_authenticated_import_runs_once_and_returns_success(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+
+    assert post("/run-import", headers={"X-Import-Key": "correct-key"}) == (
+        200, {"status": "completed"}
+    )
+    assert calls == [True]
+
+
+def test_import_lock_is_released_after_success(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+    headers = {"X-Import-Key": "correct-key"}
+
+    assert post("/run-import", headers=headers)[0] == 200
+    assert post("/run-import", headers=headers)[0] == 200
+    assert calls == [True, True]
+
+
+def test_get_import_is_405_and_openapi_only_documents_post(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+
+    assert get("/run-import")[0] == 405
+    operations = get("/openapi.json")[1]["paths"]["/run-import"]
+    assert "post" in operations and "get" not in operations
+    assert calls == []
+
+
+def test_import_key_is_not_accepted_as_query_parameter(monkeypatch):
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    assert post("/run-import", x_import_key="correct-key") == (
+        401, {"detail": "Invalid import key"}
+    )
+
+
+def test_import_failure_is_generic_and_releases_lock(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+
+    def fail_then_succeed():
+        calls.append(True)
+        if len(calls) == 1:
+            raise RuntimeError("private importer failure details")
+
+    monkeypatch.setattr(app_module, "run_import", fail_then_succeed)
+    headers = {"X-Import-Key": "correct-key"}
+
+    status, body = post("/run-import", headers=headers)
+    assert (status, body) == (500, {"detail": "Import failed"})
+    assert "private importer failure details" not in json.dumps(body)
+    assert post("/run-import", headers=headers) == (200, {"status": "completed"})
+    assert calls == [True, True]
+
+
+def test_overlapping_import_returns_conflict_without_running(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+    app_module.IMPORT_LOCK.acquire()
+    try:
+        assert post("/run-import", headers={"X-Import-Key": "correct-key"}) == (
+            409, {"detail": "Import already running"}
+        )
+    finally:
+        app_module.IMPORT_LOCK.release()
+    assert calls == []

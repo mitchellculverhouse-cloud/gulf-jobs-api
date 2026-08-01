@@ -1,10 +1,14 @@
+import hmac
+import logging
+import os
+import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Optional
 
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, Header, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import Numeric, case, cast, func, or_
+from sqlalchemy import Numeric, case, cast, func, or_, text
 
 from database import Session, init_db
 from importer import run_import
@@ -14,6 +18,8 @@ from schemas import JobResult, PaginatedJobsResponse
 
 LIKE_ESCAPE = "\\"
 JOB_RESULT_FIELDS = tuple(JobResult.model_fields)
+IMPORT_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 class JobSort(str, Enum):
@@ -84,6 +90,18 @@ app.add_middleware(
 @app.on_event("startup")
 def initialize_database():
     init_db()
+
+
+@app.get("/health")
+def health():
+    session = Session()
+    try:
+        session.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable") from None
+    finally:
+        session.close()
+    return {"status": "ok"}
 
 
 @app.get("/jobs", response_model=PaginatedJobsResponse)
@@ -230,15 +248,22 @@ def get_job(job_id: Annotated[int, Path(ge=1)]):
 
 
 
-@app.get("/run-import")
-def run_import_test():
+@app.post("/run-import")
+def run_import_endpoint(x_import_key: Annotated[Optional[str], Header()] = None):
+    expected_key = os.environ.get("IMPORT_API_KEY")
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="Import endpoint is not configured")
+    if not x_import_key or not hmac.compare_digest(x_import_key, expected_key):
+        raise HTTPException(status_code=401, detail="Invalid import key")
+    if not IMPORT_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Import already running")
 
-    run_import()
+    try:
+        run_import()
+    except Exception:
+        logger.exception("Import failed")
+        raise HTTPException(status_code=500, detail="Import failed") from None
+    finally:
+        IMPORT_LOCK.release()
 
-    with Session() as session:
-        count = session.query(Job).count()
-
-    return {
-        "status": "import complete",
-        "total_jobs": count
-    }
+    return {"status": "completed"}
