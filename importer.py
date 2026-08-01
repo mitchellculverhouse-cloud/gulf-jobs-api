@@ -5,7 +5,7 @@ from collections import Counter
 
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from database import Session
 from models import Job
@@ -235,13 +235,22 @@ def _wuzzuf_date(value):
     return f"{match[3]}-{match[1]}-{match[2]}" if match else normalize_date(value)
 
 
+def _wuzzuf_entity_path(value):
+    """Normalize equivalent localized WUZZUF job paths for exact comparison."""
+    path = unquote(urlsplit(clean_text(value)).path)
+    parts = [part for part in path.split("/") if part]
+    if parts and parts[0].casefold() in {"ar", "en"}:
+        parts.pop(0)
+    return "/".join(parts)
+
+
 def _from_wuzzuf_store(store, url):
     if not isinstance(store, dict):
         return {}
     jobs = store.get("entities", {}).get("job", {}).get("collection", {})
-    path = urlsplit(url).path.strip("/")
+    path = _wuzzuf_entity_path(url)
     entity = next((item for item in jobs.values()
-                   if clean_text(item.get("attributes", {}).get("uri")).strip("/") == path), None)
+                   if _wuzzuf_entity_path(item.get("attributes", {}).get("uri")) == path), None)
     if not entity:
         return {}
     job = entity.get("attributes", {})
@@ -256,6 +265,8 @@ def _from_wuzzuf_store(store, url):
         company_name = _as_text(company.get("name"))
     requirements = _html_text(job.get("requirements"))
     description = _html_text(job.get("description"))
+    requirements = requirements if _meaningful_text(requirements) else ""
+    description = description if _meaningful_text(description) else ""
     if requirements:
         description = f"{description}\n\nJob Requirements\n{requirements}" if description else requirements
     roles = ", ".join(filter(None, (_named(item) for item in job.get("workRoles") or [])))
@@ -312,6 +323,8 @@ def _wuzzuf_semantic_html(soup):
             result.update(city=city, country=normalize_country(country))
     description = _section_content(soup, {"job description", "الوصف الوظيفي"})
     requirements = _section_content(soup, {"job requirements", "متطلبات الوظيفة"})
+    description = description if _meaningful_text(description) else ""
+    requirements = requirements if _meaningful_text(requirements) else ""
     if requirements:
         description = f"{description}\n\nJob Requirements\n{requirements}" if description else requirements
     if description:
@@ -382,12 +395,25 @@ def parse_wuzzuf_detail(html, url, source):
     return values
 
 
+EMPTY_TEXT_PLACEHOLDERS = {"n/a", "na", "not specified"}
+
+
+def _meaningful_text(value):
+    """Return whether text contains readable content rather than a placeholder."""
+    text = clean_text(value)
+    if not text or text.casefold().strip(" .,:;!?-_—–/\\()[]{}") in EMPTY_TEXT_PLACEHOLDERS:
+        return False
+    return any(character.isalnum() for character in text)
+
+
 def validate_wuzzuf_detail(values):
     """Reject successful responses that contain only listing/config baselines."""
-    substantial = bool(clean_text(values.get("description")) or clean_text(values.get("company_name")))
-    additional = any(not _missing(values.get(field)) for field in (
-        "city", "area", "job_type", "work_mode", "skills", "category",
-        "experience_level", "date_posted",
+    substantial = (_meaningful_text(values.get("description"))
+                   or _meaningful_text(values.get("company_name")))
+    additional = any(_meaningful_text(values.get(field)) for field in (
+        "city", "area", "skills", "category", "industry", "salary_min",
+        "salary_max", "salary_currency", "salary_period", "job_type", "work_mode",
+        "experience_level", "date_posted", "closing_date",
     ))
     return substantial and additional
 
@@ -403,6 +429,11 @@ def _historical_company_placeholder(value):
 def _should_enrich(field, existing, scraped):
     if _missing(scraped):
         return False
+    if field in ("description", "company_name"):
+        if not _meaningful_text(scraped):
+            return False
+        if not _meaningful_text(existing):
+            return True
     if _missing(existing):
         return True
     return (field == "company_name" and _historical_company_placeholder(existing)

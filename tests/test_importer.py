@@ -114,6 +114,28 @@ def test_current_live_wuzzuf_embedded_state_extracts_detail_fields():
     assert importer.validate_wuzzuf_detail(job) is True
 
 
+def test_arabic_url_selects_embedded_entity_without_locale_prefix():
+    job = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_live_english_detail.html"),
+        "https://www.wuzzuf.net/ar/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia/?ref=listing",
+        source(),
+    )
+    assert job["company_name"] == "Gulf Services"
+    assert job["description"].startswith("Coordinate daily office operations.")
+    assert job["skills"] == "Microsoft Office, Scheduling"
+    assert job["category"] == "Administration"
+    assert job["salary_min"] == "6000"
+    assert job["date_posted"] == "2026-07-31"
+
+
+@pytest.mark.parametrize("requested, embedded", [
+    ("https://wuzzuf.net/ar/saudi/jobs/p/example/?x=1", "saudi/jobs/p/example"),
+    ("https://www.wuzzuf.net/en/saudi/jobs/p/example", "/saudi/jobs/p/example/?source=state"),
+])
+def test_wuzzuf_entity_path_normalizes_locale_slashes_and_query(requested, embedded):
+    assert importer._wuzzuf_entity_path(requested) == importer._wuzzuf_entity_path(embedded)
+
+
 def test_current_live_arabic_semantic_html_structure():
     job = importer.parse_wuzzuf_detail(
         fixture("wuzzuf_live_arabic_detail.html"),
@@ -132,6 +154,40 @@ def test_title_only_detail_is_not_meaningful():
     job = importer.parse_wuzzuf_detail(
         "<h1>Listing title only</h1>", "https://wuzzuf.net/jobs/p/title-only", source())
     assert importer.validate_wuzzuf_detail(job) is False
+
+
+@pytest.mark.parametrize("description", ["-", "—", "... !!!", "N/A", "NA", "Not specified", "  "])
+def test_placeholder_description_is_not_meaningful(description):
+    assert importer.validate_wuzzuf_detail({
+        "description": description, "company_name": "", "city": "Jeddah",
+        "job_type": "Full Time", "work_mode": "On-site",
+    }) is False
+
+
+def test_placeholder_description_and_requirements_do_not_create_heading_content():
+    html = '''
+    <h1>Secretary</h1>
+    <h2>Job Description</h2><div>-</div>
+    <h2>Job Requirements</h2><div>—</div>
+    <div>Jeddah, Saudi Arabia</div>
+    '''
+    job = importer.parse_wuzzuf_detail(
+        html, "https://wuzzuf.net/ar/saudi/jobs/p/placeholder", source())
+    assert job["description"] == ""
+    assert importer.validate_wuzzuf_detail(job) is False
+
+
+@pytest.mark.parametrize("description", [
+    "تنسيق الأعمال الإدارية اليومية.",
+    "Coordinate daily administrative work.",
+])
+def test_readable_description_is_meaningful(description):
+    assert importer.validate_wuzzuf_detail({"description": description, "city": "Jeddah"}) is True
+
+
+@pytest.mark.parametrize("company_name", ["-", "—", "...", "N/A", "Not specified"])
+def test_placeholder_employer_is_not_meaningful(company_name):
+    assert importer.validate_wuzzuf_detail({"company_name": company_name, "city": "Jeddah"}) is False
 
 
 def test_existing_record_is_enriched_without_overwriting_useful_values(db_factory):
@@ -161,6 +217,28 @@ def test_live_detail_enriches_incomplete_existing_row_without_duplicate(db_facto
     assert saved.id == original_id
     assert saved.company_name == "Gulf Services"
     assert saved.description.startswith("Coordinate daily office operations.")
+    assert db.query(Job).count() == 1
+    db.close()
+
+
+def test_arabic_detail_replaces_placeholder_in_incomplete_existing_row(db_factory):
+    db = db_factory()
+    url = "https://wuzzuf.net/ar/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
+    db.add(Job(
+        title="Office Coordinator", apply_url=f"{url}?ref=listing", source="WUZZUF",
+        country="Saudi Arabia", city="Riyadh", job_type="Full Time", work_mode="On-site",
+        description="-", company_name="",
+    ))
+    db.commit()
+    original_id = db.query(Job).one().id
+    values = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_live_english_detail.html"), url, source())
+    assert importer.validate_wuzzuf_detail(values) is True
+    assert importer.save_job(db, values)[0] == "updated"
+    saved = db.query(Job).one()
+    assert saved.id == original_id
+    assert saved.description.startswith("Coordinate daily office operations.")
+    assert saved.company_name == "Gulf Services"
     assert db.query(Job).count() == 1
     db.close()
 
@@ -226,6 +304,29 @@ def test_meaningless_detail_isolated_and_later_job_continues(monkeypatch, db_fac
     db = db_factory()
     assert db.query(Job).count() == 1
     assert db.query(Job).one().company_name == "Gulf Technology Co."
+    db.close()
+
+
+def test_meaningless_detail_does_not_update_existing_record(monkeypatch, db_factory):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    first = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    second = "https://wuzzuf.net/jobs/p/beta-accountant"
+    html = "<h1>Software Engineer</h1><p>Jeddah, Saudi Arabia</p><h2>Job Description</h2><div>-</div>"
+    http = FakeHTTP({listing_url: [Response(fixture("wuzzuf_listing.html"))],
+                     first: [Response(html)],
+                     second: [Response(fixture("wuzzuf_jsonld_detail.html"))]})
+    db = db_factory()
+    db.add(Job(title="Existing title", apply_url=first, description="-", source="WUZZUF"))
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    result = importer.run_import(session_factory=db_factory, http_session=http, sleeper=lambda _: None)
+    assert result["failed_detail_pages"] == 1
+    assert result["inserted"] == 1
+    db = db_factory()
+    existing = db.query(Job).filter(Job.apply_url == first).one()
+    assert existing.title == "Existing title"
+    assert existing.description == "-"
     db.close()
 
 
