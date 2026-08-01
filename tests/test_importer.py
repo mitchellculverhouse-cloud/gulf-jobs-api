@@ -93,6 +93,47 @@ def test_semantic_html_fallback_and_missing_values():
     assert job["country"] == "Saudi Arabia"
 
 
+def test_current_live_wuzzuf_embedded_state_extracts_detail_fields():
+    job = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_live_english_detail.html"),
+        "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia",
+        source(),
+    )
+    assert (job["company_name"], job["city"], job["area"], job["country"]) == (
+        "Gulf Services", "Riyadh", "Al Olaya", "Saudi Arabia")
+    assert "Coordinate daily office operations." in job["description"]
+    assert "Job Requirements\n- Clear written communication." in job["description"]
+    assert (job["job_type"], job["work_mode"]) == ("Full Time", "On-site")
+    assert job["skills"] == "Microsoft Office, Scheduling"
+    assert job["category"] == "Administration"
+    assert job["industry"] == "Business Services"
+    assert job["experience_level"] == "2 - 4 years"
+    assert (job["date_posted"], job["closing_date"]) == ("2026-07-31", "2026-09-29")
+    assert (job["salary_min"], job["salary_max"], job["salary_currency"], job["salary_period"]) == (
+        "6000", "8000", "SAR", "Monthly")
+    assert importer.validate_wuzzuf_detail(job) is True
+
+
+def test_current_live_arabic_semantic_html_structure():
+    job = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_live_arabic_detail.html"),
+        "https://wuzzuf.net/saudi/jobs/p/arabic-administrator",
+        source(),
+    )
+    assert (job["title"], job["company_name"]) == ("منسق إداري", "شركة سرية")
+    assert (job["city"], job["country"]) == ("جدة", "Saudi Arabia")
+    assert (job["job_type"], job["work_mode"]) == ("دوام كامل", "عن بعد")
+    assert "تنسيق الأعمال الإدارية اليومية." in job["description"]
+    assert "مهارات تواصل جيدة." in job["description"]
+    assert importer.validate_wuzzuf_detail(job) is True
+
+
+def test_title_only_detail_is_not_meaningful():
+    job = importer.parse_wuzzuf_detail(
+        "<h1>Listing title only</h1>", "https://wuzzuf.net/jobs/p/title-only", source())
+    assert importer.validate_wuzzuf_detail(job) is False
+
+
 def test_existing_record_is_enriched_without_overwriting_useful_values(db_factory):
     db = db_factory()
     db.add(Job(title="Original title", apply_url="https://WUZZUF.net/jobs/p/alpha/?ref=old", description="Keep me", company_name=""))
@@ -104,6 +145,23 @@ def test_existing_record_is_enriched_without_overwriting_useful_values(db_factor
     assert saved.title == "Original title"
     assert saved.description == "Keep me"
     assert saved.company_name == "Actual Employer"
+    db.close()
+
+
+def test_live_detail_enriches_incomplete_existing_row_without_duplicate(db_factory):
+    db = db_factory()
+    url = "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
+    db.add(Job(title="Office Coordinator", apply_url=f"{url}?ref=listing", source="WUZZUF"))
+    db.commit()
+    original_id = db.query(Job).one().id
+    values = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_live_english_detail.html"), url, source())
+    assert importer.save_job(db, values)[0] == "updated"
+    saved = db.query(Job).one()
+    assert saved.id == original_id
+    assert saved.company_name == "Gulf Services"
+    assert saved.description.startswith("Coordinate daily office operations.")
+    assert db.query(Job).count() == 1
     db.close()
 
 
@@ -147,6 +205,24 @@ def test_detail_failure_isolated_and_outcomes_counted(monkeypatch, db_factory):
     monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
     result = importer.run_import(session_factory=db_factory, http_session=http, sleeper=lambda _: None)
     assert result == {"listing_links_found": 3, "unique_job_urls": 2, "inserted": 1, "updated": 0, "unchanged": 0, "failed_detail_pages": 1, "duplicate_database_urls": 0}
+    db = db_factory()
+    assert db.query(Job).count() == 1
+    assert db.query(Job).one().company_name == "Gulf Technology Co."
+    db.close()
+
+
+def test_meaningless_detail_isolated_and_later_job_continues(monkeypatch, db_factory, capsys):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    first = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    second = "https://wuzzuf.net/jobs/p/beta-accountant"
+    http = FakeHTTP({listing_url: [Response(fixture("wuzzuf_listing.html"))],
+                     first: [Response("<h1>Software Engineer</h1>")],
+                     second: [Response(fixture("wuzzuf_jsonld_detail.html"))]})
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    result = importer.run_import(session_factory=db_factory, http_session=http, sleeper=lambda _: None)
+    assert result["failed_detail_pages"] == 1
+    assert result["inserted"] == 1
+    assert "no meaningful WUZZUF detail enrichment" in capsys.readouterr().out
     db = db_factory()
     assert db.query(Job).count() == 1
     assert db.query(Job).one().company_name == "Gulf Technology Co."

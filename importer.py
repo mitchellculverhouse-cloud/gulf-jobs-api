@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from collections import Counter
 
@@ -127,6 +128,17 @@ def _as_text(value):
     return clean_text(value)
 
 
+def _html_text(value):
+    """Turn source HTML into readable text while retaining block boundaries."""
+    soup = BeautifulSoup(str(value or ""), "html.parser")
+    for item in soup.find_all("li"):
+        item.insert_before("\n- ")
+    for block in soup.find_all(["br", "p", "div", "ul", "ol"]):
+        block.append("\n")
+    lines = [clean_text(line) for line in soup.get_text().splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
 def _location(posting):
     location = posting.get("jobLocation") or {}
     if isinstance(location, list):
@@ -159,7 +171,7 @@ def _from_posting(posting):
         "title": _as_text(posting.get("title")),
         "company_name": _as_text(organization),
         "country": normalize_country(country), "city": normalize_city(city), "area": clean_text(area),
-        "description": clean_text(BeautifulSoup(str(posting.get("description", "")), "html.parser").get_text(" ")),
+        "description": _html_text(posting.get("description")),
         "skills": _as_text(posting.get("skills") or posting.get("qualifications")),
         "category": _as_text(posting.get("occupationalCategory")),
         "industry": _as_text(posting.get("industry")),
@@ -181,6 +193,134 @@ LABELS = {
     "languages_required": ("languages", "language"), "job_type": ("job type",),
     "work_mode": ("work mode", "work location"), "closing_date": ("closing date",),
 }
+
+
+def _wuzzuf_store(soup):
+    """Read WUZZUF's server-rendered Redux state without executing page scripts."""
+    marker = "Wuzzuf.initialStoreState"
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text()
+        start = text.find(marker)
+        if start < 0:
+            continue
+        start = text.find("{", start + len(marker))
+        decoder = json.JSONDecoder()
+        try:
+            return decoder.raw_decode(text[start:])[0]
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return None
+
+
+def _named(value):
+    return _as_text(value.get("displayedName") or value.get("name")) if isinstance(value, dict) else _as_text(value)
+
+
+def _experience(years):
+    if not isinstance(years, dict):
+        return ""
+    minimum, maximum = years.get("min"), years.get("max")
+    if minimum is not None and maximum is not None:
+        return f"{minimum} - {maximum} years"
+    if minimum is not None:
+        return f"{minimum}+ years"
+    if maximum is not None:
+        return f"Up to {maximum} years"
+    return ""
+
+
+def _wuzzuf_date(value):
+    value = clean_text(value)
+    match = re.match(r"^(\d{2})/(\d{2})/(\d{4})", value)
+    return f"{match[3]}-{match[1]}-{match[2]}" if match else normalize_date(value)
+
+
+def _from_wuzzuf_store(store, url):
+    if not isinstance(store, dict):
+        return {}
+    jobs = store.get("entities", {}).get("job", {}).get("collection", {})
+    path = urlsplit(url).path.strip("/")
+    entity = next((item for item in jobs.values()
+                   if clean_text(item.get("attributes", {}).get("uri")).strip("/") == path), None)
+    if not entity:
+        return {}
+    job = entity.get("attributes", {})
+    location = job.get("location") or {}
+    salary = job.get("salary") or {}
+    company_ref = entity.get("relationships", {}).get("company", {}).get("data") or {}
+    companies = store.get("entities", {}).get("company", {}).get("collection", {})
+    company = companies.get(str(company_ref.get("id")), {}).get("attributes", {})
+    if job.get("hideCompany"):
+        company_name = "Confidential Company"
+    else:
+        company_name = _as_text(company.get("name"))
+    requirements = _html_text(job.get("requirements"))
+    description = _html_text(job.get("description"))
+    if requirements:
+        description = f"{description}\n\nJob Requirements\n{requirements}" if description else requirements
+    roles = ", ".join(filter(None, (_named(item) for item in job.get("workRoles") or [])))
+    skills = ", ".join(filter(None, (_named(item) for item in job.get("keywords") or [])))
+    work_types = ", ".join(filter(None, (_named(item) for item in job.get("workTypes") or [])))
+    return {
+        "title": _as_text(job.get("title")), "company_name": company_name,
+        "country": normalize_country(_named(location.get("country") or {})),
+        "city": normalize_city(_named(location.get("city") or {})),
+        "area": _named(location.get("area") or {}), "description": description,
+        "skills": skills, "category": roles,
+        "industry": ", ".join(filter(None, (_named(item) for item in company.get("workIndustries") or []))),
+        "salary_min": _as_text(salary.get("min")), "salary_max": _as_text(salary.get("max")),
+        "salary_currency": normalize_currency((salary.get("currency") or {}).get("code")),
+        "salary_period": normalize_salary_period((salary.get("period") or {}).get("name")),
+        "job_type": normalize_job_type(work_types),
+        "work_mode": normalize_work_mode(_named(job.get("workplaceArrangement") or {})),
+        "experience_level": _experience(job.get("workExperienceYears")) or _named(job.get("careerLevel") or {}),
+        "gender_required": _as_text((job.get("candidatePreferences") or {}).get("gender")),
+        "date_posted": _wuzzuf_date(job.get("postedAt")),
+        "closing_date": _wuzzuf_date(job.get("expireAt")),
+    }
+
+
+def _section_content(soup, headings):
+    heading = next((node for node in soup.find_all(["h2", "h3", "h4"])
+                    if clean_text(node.get_text()).casefold() in headings), None)
+    if not heading:
+        return ""
+    content = next((node for node in heading.find_next_siblings()
+                    if getattr(node, "name", None) not in (None, "style")), None)
+    return _html_text(content) if content else ""
+
+
+def _wuzzuf_semantic_html(soup):
+    """Target stable WUZZUF headings and browse-link URL semantics, not CSS hashes."""
+    result = {}
+    title = soup.find("h1")
+    if title:
+        result["title"] = clean_text(title.get_text(" ", strip=True))
+        header = title.parent
+        links = header.find_all("a", href=True) if header else []
+        for link in links:
+            href, value = link.get("href", ""), clean_text(link.get_text(" ", strip=True))
+            if "filters%5Bcountry%5D" in href:
+                if any(token in href for token in ("Full-Time", "Part-Time", "Contract", "Internship")):
+                    result["job_type"] = value
+                elif any(token in href for token in ("On-Site", "Remote", "Hybrid")):
+                    result["work_mode"] = value
+        location = next((clean_text(text) for text in header.stripped_strings
+                         if "," in text and "posted" not in text.casefold()), "") if header else ""
+        if location:
+            city, country = (part.strip() for part in location.rsplit(",", 1))
+            result.update(city=city, country=normalize_country(country))
+    description = _section_content(soup, {"job description", "الوصف الوظيفي"})
+    requirements = _section_content(soup, {"job requirements", "متطلبات الوظيفة"})
+    if requirements:
+        description = f"{description}\n\nJob Requirements\n{requirements}" if description else requirements
+    if description:
+        result["description"] = description
+    company = next((node for node in soup.find_all(string=True)
+                    if clean_text(node).casefold() in {"confidential company", "شركة سرية"}), None)
+    if company:
+        result["company_name"] = clean_text(company)
+    return result
 
 
 def _semantic_fallback(soup):
@@ -220,6 +360,12 @@ def parse_wuzzuf_detail(html, url, source):
             if posting:
                 break
     values = _from_posting(posting) if posting else {}
+    if not posting:
+        values = _from_wuzzuf_store(_wuzzuf_store(soup), url)
+    live_html = _wuzzuf_semantic_html(soup)
+    for key, value in live_html.items():
+        if not values.get(key):
+            values[key] = value
     fallback = _semantic_fallback(soup)
     for key, value in fallback.items():
         if not values.get(key):
@@ -234,6 +380,16 @@ def parse_wuzzuf_detail(html, url, source):
     for field in JOB_FIELDS:
         values.setdefault(field, None if field in ("date_posted", "closing_date") else "")
     return values
+
+
+def validate_wuzzuf_detail(values):
+    """Reject successful responses that contain only listing/config baselines."""
+    substantial = bool(clean_text(values.get("description")) or clean_text(values.get("company_name")))
+    additional = any(not _missing(values.get(field)) for field in (
+        "city", "area", "job_type", "work_mode", "skills", "category",
+        "experience_level", "date_posted",
+    ))
+    return substantial and additional
 
 
 def _missing(value):
@@ -328,6 +484,8 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
                 values = detail_parser(detail.text, job["link"], source)
                 if not values.get("title"):
                     values["title"] = job["title"]
+                if source.get("detail_parser") == "wuzzuf" and not validate_wuzzuf_detail(values):
+                    raise ValueError("no meaningful WUZZUF detail enrichment")
                 db = session_factory()
                 try:
                     outcome, duplicate_count = save_job(db, values)
