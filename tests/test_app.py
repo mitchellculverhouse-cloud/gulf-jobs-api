@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app as app_module
+import importer
 from models import Base, Job
 
 
@@ -290,6 +291,85 @@ def test_filter_options_clean_deduplicate_and_sort_values(session_factory):
         "salary_periods": ["Annual", "Monthly"],
         "languages": ["Arabic, English", "English"],
     }
+
+
+def test_multi_value_text_filter_options_are_individual_deduplicated_and_usable(session_factory):
+    add_jobs(
+        session_factory,
+        {"category": "Management, Engineering", "industry": "Construction, Technology"},
+        {"category": "Engineering", "industry": "Technology"},
+        {"category": "Human Resources", "industry": "Business Services"},
+    )
+
+    status, options = get("/jobs/filter-options")
+
+    assert status == 200
+    assert options["categories"] == ["Engineering", "Human Resources", "Management"]
+    assert options["industries"] == ["Business Services", "Construction", "Technology"]
+    for field, query_name in (("categories", "category"), ("industries", "industry")):
+        for option in options[field]:
+            result_status, result = get(**{query_name: option})
+            assert result_status == 200
+            assert result["total"] >= 1
+
+
+def test_exact_filter_options_keep_compound_values_submittable(session_factory):
+    add_jobs(session_factory, {
+        "job_type": "Full Time, Part Time", "work_mode": "Hybrid",
+        "experience_level": "Entry, Mid",
+    })
+
+    status, options = get("/jobs/filter-options")
+
+    assert status == 200
+    assert options["job_types"] == ["Full Time, Part Time"]
+    assert options["work_modes"] == ["Hybrid"]
+    assert options["experience_levels"] == ["Entry, Mid"]
+    for name, value in (
+        ("job_type", options["job_types"][0]),
+        ("work_mode", options["work_modes"][0]),
+        ("experience_level", options["experience_levels"][0]),
+    ):
+        assert get(**{name: value})[1]["total"] == 1
+
+
+def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/legacy-taxonomy"
+    malformed_category = (
+        "OtherInstallation/Maintenance/RepairInstallation/Maintenance/Repair"
+    )
+    add_jobs(session_factory, {
+        "apply_url": url, "source": "WUZZUF", "category": malformed_category,
+        "industry": "ConstructionTechnologyBusiness Services",
+    })
+    values = {
+        "title": "Engineer", "apply_url": url, "source": "WUZZUF",
+        "category": "Installation/Maintenance/Repair, Other",
+        "industry": "Construction, Business Services",
+        "_authoritative_fields": ("category", "industry"),
+    }
+
+    with session_factory() as session:
+        original = session.query(Job).one()
+        original_id = original.id
+        assert importer.save_job(session, values) == ("updated", 0)
+        repaired = session.get(Job, original_id)
+        assert repaired.apply_url == url
+        assert repaired.category == "Installation/Maintenance/Repair, Other"
+        assert repaired.industry == "Construction, Business Services"
+        assert importer.save_job(session, values) == ("unchanged", 0)
+        assert session.query(Job).count() == 1
+
+    status, options = get("/jobs/filter-options")
+    assert status == 200
+    assert options["categories"] == ["Installation/Maintenance/Repair", "Other"]
+    assert options["industries"] == ["Business Services", "Construction"]
+    assert malformed_category not in options["categories"]
+    for field, query_name in (("categories", "category"), ("industries", "industry")):
+        for option in options[field]:
+            result_status, result = get(**{query_name: option})
+            assert result_status == 200
+            assert result["total"] == 1
 
 
 def test_filter_options_empty_database_returns_stable_empty_contract(session_factory):

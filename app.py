@@ -58,6 +58,12 @@ def cleaned_distinct_values(session, column):
     return sorted({value.strip() for value, in values if value and value.strip()})
 
 
+def cleaned_delimited_values(session, column):
+    """Expand importer-delimited multi-values into usable text-filter options."""
+    values = cleaned_distinct_values(session, column)
+    return sorted({part.strip() for value in values for part in value.split(",") if part.strip()})
+
+
 def numeric_salary(column, dialect_name):
     """Safely convert valid non-negative salary text to a numeric expression."""
     value = func.trim(column)
@@ -250,8 +256,8 @@ def get_job_filter_options():
         return {
             "countries": cleaned_distinct_values(session, Job.country),
             "cities": cleaned_distinct_values(session, Job.city),
-            "categories": cleaned_distinct_values(session, Job.category),
-            "industries": cleaned_distinct_values(session, Job.industry),
+            "categories": cleaned_delimited_values(session, Job.category),
+            "industries": cleaned_delimited_values(session, Job.industry),
             "job_types": cleaned_distinct_values(session, Job.job_type),
             "work_modes": cleaned_distinct_values(session, Job.work_mode),
             "experience_levels": cleaned_distinct_values(session, Job.experience_level),

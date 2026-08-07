@@ -115,6 +115,30 @@ def test_current_live_wuzzuf_embedded_state_extracts_detail_fields():
     assert importer.validate_wuzzuf_detail(job) is True
 
 
+def test_wuzzuf_structured_multi_values_are_preserved_normalized_and_deduplicated():
+    html = fixture("wuzzuf_live_english_detail.html").replace(
+        '"workRoles":[{"name":"Administration"}]',
+        '"workRoles":[{"name":"Management"},{"name":"Engineering"},{"name":"Management"}]',
+    ).replace(
+        '"workTypes":[{"displayedName":"Full Time"}]',
+        '"workTypes":[{"displayedName":"Full-time"},{"displayedName":"Part_time"},{"displayedName":"Full Time"}]',
+    ).replace(
+        '"workIndustries":[{"name":"Business Services"}]',
+        '"workIndustries":[{"name":"Construction"},{"name":"Technology"},{"name":"Construction"}]',
+    )
+
+    job = importer.parse_wuzzuf_detail(
+        html,
+        "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia",
+        source(),
+    )
+
+    assert job["category"] == "Management, Engineering"
+    assert job["industry"] == "Construction, Technology"
+    assert job["job_type"] == "Full Time, Part Time"
+    assert job["_authoritative_fields"] == ("category", "industry")
+
+
 def test_arabic_url_selects_embedded_entity_without_locale_prefix():
     job = importer.parse_wuzzuf_detail(
         fixture("wuzzuf_live_english_detail.html"),
@@ -270,6 +294,21 @@ def test_repeated_save_prevents_duplicate_and_returns_zero_duplicate_count(db_fa
     assert importer.save_job(db, values) == ("inserted", 0)
     assert importer.save_job(db, values) == ("unchanged", 0)
     assert db.query(Job).count() == 1
+    db.close()
+
+
+def test_repeated_save_of_structured_multi_values_is_idempotent(db_factory):
+    db = db_factory()
+    values = {
+        "title": "Engineer", "apply_url": "https://wuzzuf.net/jobs/p/multi",
+        "source": "WUZZUF", "category": "Management, Engineering",
+        "industry": "Construction, Technology", "job_type": "Full Time, Part Time",
+    }
+    assert importer.save_job(db, values) == ("inserted", 0)
+    assert importer.save_job(db, values) == ("unchanged", 0)
+    saved = db.query(Job).one()
+    assert (saved.category, saved.industry, saved.job_type) == (
+        "Management, Engineering", "Construction, Technology", "Full Time, Part Time")
     db.close()
 
 
