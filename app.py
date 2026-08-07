@@ -6,6 +6,9 @@ import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Optional
+from urllib.parse import urlsplit
+
+import requests
 
 from fastapi import FastAPI, Header, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +16,12 @@ from sqlalchemy import Numeric, case, cast, func, or_, text
 
 from database import Session, init_db
 from importer import (
-    WUZZUF_CATEGORIES, WUZZUF_JOB_TYPES, WUZZUF_WORK_MODES,
+    HEADERS, WUZZUF_CATEGORIES, WUZZUF_JOB_TYPES, WUZZUF_WORK_MODES,
     backfill_wuzzuf_filters, run_import,
 )
 from models import Job
 from schemas import JobFilterOptionsResponse, JobResult, PaginatedJobsResponse
+from sources import SOURCES
 
 
 LIKE_ESCAPE = "\\"
@@ -329,6 +333,60 @@ def require_import_key(x_import_key):
         raise HTTPException(status_code=503, detail="Import endpoint is not configured")
     if not x_import_key or not hmac.compare_digest(x_import_key, expected_key):
         raise HTTPException(status_code=401, detail="Invalid import key")
+
+
+def source_connectivity_result(http, source):
+    """Check one trusted configured source without parsing or persistence."""
+    configured_url = source["url"]
+    result = {
+        "source": source.get("name"),
+        "configured_url": configured_url,
+        "http_status": None,
+        "content_type": None,
+        "response_size_bytes": None,
+        "redirected": False,
+        "final_host": None,
+        "reachable": False,
+        "error_category": None,
+    }
+    try:
+        response = http.get(
+            configured_url,
+            headers=HEADERS,
+            timeout=source.get("timeout", 45),
+        )
+    except requests.Timeout:
+        result["error_category"] = "timeout"
+    except requests.ConnectionError:
+        result["error_category"] = "connection_error"
+    except requests.RequestException:
+        result["error_category"] = "request_error"
+    except Exception:
+        # Keep an unexpected failure isolated and avoid exposing its details.
+        logger.exception("Unexpected connectivity-check failure for configured source %r",
+                         source.get("name"))
+        result["error_category"] = "unexpected_error"
+    else:
+        result.update({
+            "http_status": response.status_code,
+            "content_type": response.headers.get("Content-Type"),
+            "response_size_bytes": len(response.content),
+            "redirected": bool(response.history),
+            "final_host": (urlsplit(response.url).hostname or None),
+            "reachable": 200 <= response.status_code < 400,
+        })
+    return result
+
+
+@app.post("/maintenance/check-sources")
+def check_sources_endpoint(
+    x_import_key: Annotated[Optional[str], Header()] = None,
+):
+    """Report conservative HTTP connectivity for trusted configured sources."""
+    require_import_key(x_import_key)
+    with requests.Session() as http:
+        results = [source_connectivity_result(http, source) for source in SOURCES]
+    return {"sources": results}
 
 
 @app.post("/run-import")

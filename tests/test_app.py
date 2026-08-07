@@ -764,3 +764,163 @@ def test_wuzzuf_backfill_is_post_only_and_shares_import_lock(monkeypatch):
     finally:
         app_module.IMPORT_LOCK.release()
     assert calls == []
+
+
+class ConnectivityResponse:
+    def __init__(self, status_code, url, content=b"response", content_type="text/html",
+                 redirected=False):
+        self.status_code = status_code
+        self.url = url
+        self.content = content
+        self.headers = {"Content-Type": content_type}
+        self.history = [object()] if redirected else []
+
+
+class ConnectivitySession:
+    def __init__(self, outcomes, calls):
+        self.outcomes = iter(outcomes)
+        self.calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        outcome = next(self.outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def configure_connectivity(monkeypatch, outcomes, sources=None):
+    calls = []
+    configured = sources or [
+        {"name": "Source One", "url": "https://source-one.example/jobs",
+         "timeout": 12, "active": False},
+    ]
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "SOURCES", configured)
+    monkeypatch.setattr(
+        app_module.requests, "Session", lambda: ConnectivitySession(outcomes, calls))
+    return calls
+
+
+@pytest.mark.parametrize("headers", [None, {"X-Import-Key": ""},
+                                      {"X-Import-Key": "wrong"}])
+def test_source_check_rejects_missing_empty_or_wrong_key(monkeypatch, headers):
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module.requests, "Session",
+                        lambda: pytest.fail("network must not be used"))
+    assert post("/maintenance/check-sources", headers=headers) == (
+        401, {"detail": "Invalid import key"})
+
+
+def test_source_check_requires_configured_key(monkeypatch):
+    monkeypatch.delenv("IMPORT_API_KEY", raising=False)
+    assert post("/maintenance/check-sources") == (
+        503, {"detail": "Import endpoint is not configured"})
+
+
+def test_source_check_is_post_only(monkeypatch):
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    assert get("/maintenance/check-sources")[0] == 405
+    operations = get("/openapi.json")[1]["paths"]["/maintenance/check-sources"]
+    assert "post" in operations and "get" not in operations
+
+
+def test_source_check_reports_reachable_200_and_safe_metadata(monkeypatch):
+    calls = configure_connectivity(monkeypatch, [
+        ConnectivityResponse(200, "https://final.example/jobs", b"12345",
+                             "text/html; charset=utf-8", redirected=True),
+    ])
+    status, body = post("/maintenance/check-sources",
+                        headers={"X-Import-Key": "correct-key"})
+    assert status == 200
+    assert body == {"sources": [{
+        "source": "Source One",
+        "configured_url": "https://source-one.example/jobs",
+        "http_status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "response_size_bytes": 5,
+        "redirected": True,
+        "final_host": "final.example",
+        "reachable": True,
+        "error_category": None,
+    }]}
+    assert calls == [("https://source-one.example/jobs", {
+        "headers": app_module.HEADERS, "timeout": 12})]
+    assert "12345" not in json.dumps(body)
+
+
+@pytest.mark.parametrize("status_code", [403, 429, 500])
+def test_source_check_preserves_distinguishable_http_failure(monkeypatch, status_code):
+    configure_connectivity(monkeypatch, [
+        ConnectivityResponse(status_code, "https://source-one.example/jobs")])
+    status, body = post("/maintenance/check-sources",
+                        headers={"X-Import-Key": "correct-key"})
+    result = body["sources"][0]
+    assert status == 200
+    assert result["http_status"] == status_code
+    assert result["reachable"] is False
+    assert result["error_category"] is None
+
+
+@pytest.mark.parametrize("error, category", [
+    (importer.requests.Timeout("private timeout detail"), "timeout"),
+    (importer.requests.ConnectionError("private connection detail"), "connection_error"),
+])
+def test_source_check_safely_classifies_network_errors(monkeypatch, error, category):
+    configure_connectivity(monkeypatch, [error])
+    status, body = post("/maintenance/check-sources",
+                        headers={"X-Import-Key": "correct-key"})
+    result = body["sources"][0]
+    assert status == 200
+    assert result["error_category"] == category
+    assert result["http_status"] is None
+    assert result["reachable"] is False
+    assert "private" not in json.dumps(body)
+
+
+def test_source_failure_does_not_stop_later_configured_source(monkeypatch):
+    sources = [
+        {"name": "First", "url": "https://first.example/jobs", "timeout": 3},
+        {"name": "Second", "url": "https://second.example/jobs", "timeout": 4},
+    ]
+    calls = configure_connectivity(monkeypatch, [
+        importer.requests.ConnectionError("offline"),
+        ConnectivityResponse(200, "https://second.example/jobs"),
+    ], sources)
+    status, body = post("/maintenance/check-sources",
+                        headers={"X-Import-Key": "correct-key"})
+    assert status == 200
+    assert [result["error_category"] for result in body["sources"]] == [
+        "connection_error", None]
+    assert [result["reachable"] for result in body["sources"]] == [False, True]
+    assert [url for url, _ in calls] == [source["url"] for source in sources]
+
+
+def test_source_check_ignores_caller_url_and_performs_no_database_work(monkeypatch):
+    calls = configure_connectivity(monkeypatch, [
+        ConnectivityResponse(200, "https://source-one.example/jobs")])
+    monkeypatch.setattr(app_module, "Session",
+                        lambda: pytest.fail("database must not be accessed"))
+    status, body = post(
+        "/maintenance/check-sources",
+        headers={"X-Import-Key": "correct-key"},
+        url="http://169.254.169.254/latest/meta-data",
+    )
+    assert status == 200
+    assert [url for url, _ in calls] == ["https://source-one.example/jobs"]
+    assert body["sources"][0]["configured_url"] == "https://source-one.example/jobs"
+
+
+def test_source_check_does_not_change_existing_import_behavior(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+    assert post("/run-import", headers={"X-Import-Key": "correct-key"}) == (
+        200, {"status": "completed"})
+    assert calls == [True]
