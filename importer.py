@@ -304,7 +304,8 @@ def _from_wuzzuf_store(store, url):
         "closing_date": _wuzzuf_date(job.get("expireAt")),
     }
     result["_authoritative_fields"] = tuple(
-        field for field in ("category", "industry") if result[field]
+        field for field in ("category", "industry", "job_type", "work_mode")
+        if result[field]
     )
     return result
 
@@ -391,8 +392,18 @@ def parse_wuzzuf_detail(html, url, source):
             if posting:
                 break
     values = _from_posting(posting) if posting else {}
-    if not posting:
-        values = _from_wuzzuf_store(_wuzzuf_store(soup), url)
+    store_values = _from_wuzzuf_store(_wuzzuf_store(soup), url)
+    authoritative_fields = set(store_values.get("_authoritative_fields", ()))
+    for key, value in store_values.items():
+        if key == "_authoritative_fields":
+            continue
+        if key in authoritative_fields or not values.get(key):
+            values[key] = value
+    if authoritative_fields:
+        values["_authoritative_fields"] = tuple(
+            field for field in ("category", "industry", "job_type", "work_mode")
+            if field in authoritative_fields
+        )
     live_html = _wuzzuf_semantic_html(soup)
     for key, value in live_html.items():
         if not values.get(key):
@@ -462,7 +473,9 @@ def _should_enrich(field, existing, scraped, authoritative=False):
 
 def _enrich_job(job, values):
     changed = False
-    authoritative_fields = set(values.get("_authoritative_fields", ())) & {"category", "industry"}
+    authoritative_fields = set(values.get("_authoritative_fields", ())) & {
+        "category", "industry", "job_type", "work_mode",
+    }
     for field in JOB_FIELDS:
         scraped = values.get(field)
         if _should_enrich(
