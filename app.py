@@ -13,7 +13,7 @@ from sqlalchemy import Numeric, case, cast, func, or_, text
 from database import Session, init_db
 from importer import run_import
 from models import Job
-from schemas import JobResult, PaginatedJobsResponse
+from schemas import JobFilterOptionsResponse, JobResult, PaginatedJobsResponse
 
 
 LIKE_ESCAPE = "\\"
@@ -50,6 +50,12 @@ def trimmed(value: Optional[str]) -> Optional[str]:
 def job_to_dict(job: Job):
     """Serialize only fields deliberately included in the public job contract."""
     return {field: getattr(job, field) for field in JOB_RESULT_FIELDS}
+
+
+def cleaned_distinct_values(session, column):
+    """Return consistently sorted, unique, non-blank values for one job column."""
+    values = session.query(func.trim(column)).filter(column.isnot(None)).distinct().all()
+    return sorted({value.strip() for value, in values if value and value.strip()})
 
 
 def numeric_salary(column, dialect_name):
@@ -235,6 +241,23 @@ def get_jobs(
             "has_next": page < total_pages,
             "has_previous": page > 1 and total > 0,
             "results": [job_to_dict(job) for job in jobs],
+        }
+
+
+@app.get("/jobs/filter-options", response_model=JobFilterOptionsResponse)
+def get_job_filter_options():
+    with Session() as session:
+        return {
+            "countries": cleaned_distinct_values(session, Job.country),
+            "cities": cleaned_distinct_values(session, Job.city),
+            "categories": cleaned_distinct_values(session, Job.category),
+            "industries": cleaned_distinct_values(session, Job.industry),
+            "job_types": cleaned_distinct_values(session, Job.job_type),
+            "work_modes": cleaned_distinct_values(session, Job.work_mode),
+            "experience_levels": cleaned_distinct_values(session, Job.experience_level),
+            "currencies": cleaned_distinct_values(session, Job.salary_currency),
+            "salary_periods": cleaned_distinct_values(session, Job.salary_period),
+            "languages": cleaned_distinct_values(session, Job.languages_required),
         }
 
 
