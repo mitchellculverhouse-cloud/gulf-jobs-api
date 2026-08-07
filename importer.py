@@ -28,6 +28,10 @@ JOB_FIELDS = (
 )
 WUZZUF_HOSTS = {"wuzzuf.net", "www.wuzzuf.net"}
 WUZZUF_FILTER_FIELDS = ("category", "industry", "job_type", "work_mode")
+WUZZUF_BACKFILL_FAILURE_DIAGNOSTICS = (
+    "http_403", "http_429", "http_5xx", "http_other",
+    "timeout", "connection_error", "parser_or_unexpected", "database",
+)
 
 
 class UnsupportedParserError(ValueError):
@@ -553,11 +557,14 @@ def backfill_wuzzuf_filters(session_factory=Session, http_session=None,
 
     Rows are selected by source, then revisited through their stored application
     URL. Each row has its own transaction so a request, parse, or database failure
-    cannot prevent later rows from being considered.
+    cannot prevent later rows from being considered. Failures are returned only
+    as aggregate categories; URLs, response contents, and request data are not
+    included in the summary.
     """
     totals = Counter(scanned=0, updated=0, unchanged=0,
                      skipped_missing_page=0,
                      skipped_no_authoritative_data=0, failed=0)
+    diagnostics = Counter({name: 0 for name in WUZZUF_BACKFILL_FAILURE_DIAGNOSTICS})
     source = _wuzzuf_source()
     if source is None:
         raise UnsupportedParserError("WUZZUF detail source is not configured")
@@ -571,6 +578,7 @@ def backfill_wuzzuf_filters(session_factory=Session, http_session=None,
     http = http_session or requests.Session()
     totals["scanned"] = len(rows)
     for index, (job_id, stored_url) in enumerate(rows):
+        failure_stage = "parser_or_unexpected"
         try:
             target_url = canonical_url(stored_url)
             if (target_url != stored_url
@@ -588,6 +596,7 @@ def backfill_wuzzuf_filters(session_factory=Session, http_session=None,
                 totals["skipped_no_authoritative_data"] += 1
                 continue
 
+            failure_stage = "database"
             db = session_factory()
             try:
                 job = db.query(Job).filter(
@@ -595,33 +604,56 @@ def backfill_wuzzuf_filters(session_factory=Session, http_session=None,
                     Job.source == source["name"],
                     Job.apply_url == stored_url,
                 ).first()
-                if job is None:
-                    totals["failed"] += 1
-                    continue
-                changed = False
-                for field, value in repairs.items():
-                    if getattr(job, field) != value:
-                        setattr(job, field, value)
-                        changed = True
-                if changed:
-                    db.commit()
-                    totals["updated"] += 1
-                else:
-                    totals["unchanged"] += 1
+                if job is not None:
+                    changed = False
+                    for field, value in repairs.items():
+                        if getattr(job, field) != value:
+                            setattr(job, field, value)
+                            changed = True
+                    if changed:
+                        db.commit()
             except Exception:
-                db.rollback()
-                totals["failed"] += 1
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise
             finally:
                 db.close()
+            if job is None:
+                totals["failed"] += 1
+                diagnostics["database"] += 1
+            elif changed:
+                totals["updated"] += 1
+            else:
+                totals["unchanged"] += 1
         except requests.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            totals["skipped_missing_page" if status in (404, 410) else "failed"] += 1
+            if status in (404, 410):
+                totals["skipped_missing_page"] += 1
+            else:
+                totals["failed"] += 1
+                if status == 403:
+                    diagnostics["http_403"] += 1
+                elif status == 429:
+                    diagnostics["http_429"] += 1
+                elif status is not None and 500 <= status < 600:
+                    diagnostics["http_5xx"] += 1
+                else:
+                    diagnostics["http_other"] += 1
+        except requests.Timeout:
+            totals["failed"] += 1
+            diagnostics["timeout"] += 1
+        except requests.ConnectionError:
+            totals["failed"] += 1
+            diagnostics["connection_error"] += 1
         except Exception:
             totals["failed"] += 1
+            diagnostics[failure_stage] += 1
         finally:
             if index + 1 < len(rows):
                 sleeper(max(0, float(source.get("polite_delay", 0))))
-    return dict(totals)
+    return {**totals, "failure_diagnostics": dict(diagnostics)}
 
 
 def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):

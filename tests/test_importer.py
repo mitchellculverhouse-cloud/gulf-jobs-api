@@ -650,7 +650,13 @@ def test_wuzzuf_filter_backfill_repairs_only_authoritative_fields(monkeypatch, d
 
     assert result == {"scanned": 1, "updated": 1, "unchanged": 0,
                       "skipped_missing_page": 0,
-                      "skipped_no_authoritative_data": 0, "failed": 0}
+                      "skipped_no_authoritative_data": 0, "failed": 0,
+                      "failure_diagnostics": {
+                          "http_403": 0, "http_429": 0, "http_5xx": 0,
+                          "http_other": 0, "timeout": 0,
+                          "connection_error": 0,
+                          "parser_or_unexpected": 0, "database": 0,
+                      }}
     db = db_factory()
     saved = db.query(Job).one()
     assert (saved.category, saved.industry, saved.job_type, saved.work_mode) == (
@@ -732,7 +738,85 @@ def test_backfill_failure_does_not_stop_later_job_and_ignores_other_sources(
     result = importer.backfill_wuzzuf_filters(db_factory, http, lambda _: None)
 
     assert result["scanned"] == 2 and result["failed"] == 1 and result["updated"] == 1
+    assert result["failure_diagnostics"]["connection_error"] == 1
     db = db_factory()
     assert db.query(Job).filter(Job.apply_url == other).one().category == "Untouched"
     assert db.query(Job).filter(Job.apply_url == repaired).one().category == "Administration"
     db.close()
+
+
+@pytest.mark.parametrize(("failure", "diagnostic"), [
+    (Response(status=403), "http_403"),
+    (Response(status=429), "http_429"),
+    (Response(status=500), "http_5xx"),
+    (requests.Timeout("slow"), "timeout"),
+    (requests.ConnectionError("offline"), "connection_error"),
+])
+def test_backfill_classifies_request_failures(
+        monkeypatch, db_factory, failure, diagnostic):
+    url = "https://wuzzuf.net/jobs/p/request-failure"
+    db = db_factory()
+    db.add(Job(title="Failure", apply_url=url, source="WUZZUF"))
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+
+    result = importer.backfill_wuzzuf_filters(
+        db_factory, FakeHTTP({url: [failure]}), lambda _: None)
+
+    assert result["failed"] == 1
+    assert result["failure_diagnostics"][diagnostic] == 1
+    assert sum(result["failure_diagnostics"].values()) == 1
+
+
+def test_backfill_classifies_parser_or_unexpected_exception(monkeypatch, db_factory):
+    url = "https://wuzzuf.net/jobs/p/parser-failure"
+    db = db_factory()
+    db.add(Job(title="Failure", apply_url=url, source="WUZZUF"))
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    monkeypatch.setattr(
+        importer, "parse_wuzzuf_detail",
+        lambda *_: (_ for _ in ()).throw(ValueError("malformed structured data")),
+    )
+
+    result = importer.backfill_wuzzuf_filters(
+        db_factory, FakeHTTP({url: [Response("ignored")]}), lambda _: None)
+
+    assert result["failed"] == 1
+    assert result["failure_diagnostics"]["parser_or_unexpected"] == 1
+
+
+def test_backfill_classifies_database_exception(monkeypatch, db_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
+    db = db_factory()
+    db.add(Job(title="Failure", apply_url=url, source="WUZZUF"))
+    db.commit()
+    db.close()
+    calls = 0
+
+    class FailingDatabase:
+        def query(self, *_):
+            raise RuntimeError("database unavailable")
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    def session_factory():
+        nonlocal calls
+        calls += 1
+        return db_factory() if calls == 1 else FailingDatabase()
+
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    result = importer.backfill_wuzzuf_filters(
+        session_factory,
+        FakeHTTP({url: [Response(fixture("wuzzuf_live_english_detail.html"))]}),
+        lambda _: None,
+    )
+
+    assert result["failed"] == 1
+    assert result["failure_diagnostics"]["database"] == 1
