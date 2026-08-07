@@ -106,9 +106,29 @@ def test_server_rendered_listing_cards_extract_exact_classifications_per_url():
     assert {job["category"] for job in jobs} == {
         "Administration", "Sales/Retail", "IT/Software Development",
         "Installation/Maintenance/Repair",
+        ("Analyst/Research, Engineering - Telecom/Technology, "
+         "Hospitality/Hotels/Food Services, Media/Journalism/Publishing, Pharmaceutical"),
     }
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-admin-riyadh"]["category"] == "Administration"
+    category_text = ", ".join(job["category"] for job in jobs)
     assert not ({"Microsoft Office", "Communication Skills", "CRM", "Python",
-                 "Troubleshooting"} & {job["category"] for job in jobs})
+                 "Troubleshooting", "Market Research"} & set(category_text.split(", ")))
+
+
+def test_live_taxonomy_categories_are_preserved_beside_generic_skill_tags():
+    jobs = importer.parse_wuzzuf_listing(
+        fixture("wuzzuf_listing_cards.html"),
+        "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia",
+    )
+    job = next(item for item in jobs if item["title"] == "Telecom Market Analyst")
+
+    assert job["category"].split(", ") == [
+        "Analyst/Research", "Engineering - Telecom/Technology",
+        "Hospitality/Hotels/Food Services", "Media/Journalism/Publishing",
+        "Pharmaceutical",
+    ]
+    assert "Engineering" not in job["category"].split(", ")
+    assert "Software Development" not in job["category"].split(", ")
 
 
 def test_jsonld_extracts_enriched_company_location_salary_and_dates():

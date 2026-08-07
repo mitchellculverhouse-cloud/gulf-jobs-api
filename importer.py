@@ -29,17 +29,19 @@ JOB_FIELDS = (
 WUZZUF_HOSTS = {"wuzzuf.net", "www.wuzzuf.net"}
 WUZZUF_FILTER_FIELDS = ("category", "industry", "job_type", "work_mode")
 WUZZUF_CATEGORIES = {
-    "Accounting/Finance", "Administration", "Banking", "Business Development",
+    "Accounting/Finance", "Administration", "Analyst/Research", "Banking",
+    "Business Development",
     "C-Level Executive/GM/Director", "Creative/Design/Art", "Customer Service/Support",
-    "Education/Teaching", "Engineering", "Engineering - Construction/Civil/Architecture",
+    "Education/Teaching", "Engineering - Construction/Civil/Architecture",
     "Engineering - Mechanical/Electrical", "Engineering - Oil & Gas/Energy",
-    "Engineering - Other", "Human Resources", "Installation/Maintenance/Repair",
-    "IT/Software Development", "Legal", "Logistics/Supply Chain",
+    "Engineering - Other", "Engineering - Telecom/Technology",
+    "Hospitality/Hotels/Food Services", "Human Resources", "IT/Software Development",
+    "Installation/Maintenance/Repair", "Legal", "Logistics/Supply Chain",
     "Manufacturing/Production", "Marketing/PR/Advertising", "Medical/Healthcare",
-    "Operations/Management", "Other", "Project/Program Management",
-    "Purchasing/Procurement", "Quality", "R&D/Science", "Sales/Retail",
-    "Software Development", "Sports and Leisure", "Strategy/Consulting",
-    "Tourism/Travel", "Training/Instructor", "Writing/Editorial",
+    "Media/Journalism/Publishing", "Operations/Management", "Pharmaceutical",
+    "Project/Program Management", "Purchasing/Procurement", "Quality", "R&D/Science",
+    "Sales/Retail", "Sports and Leisure", "Strategy/Consulting", "Tourism/Travel",
+    "Training/Instructor", "Writing/Editorial",
 }
 WUZZUF_JOB_TYPES = {
     "Full Time", "Part Time", "Contract", "Temporary", "Internship",

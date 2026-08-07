@@ -367,7 +367,7 @@ def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_fa
 
     status, options = get("/jobs/filter-options")
     assert status == 200
-    assert options["categories"] == ["Installation/Maintenance/Repair", "Other"]
+    assert options["categories"] == []
     assert options["industries"] == []
     assert options["job_types"] == ["Full Time, Part Time"]
     assert options["work_modes"] == ["Hybrid"]
@@ -398,7 +398,7 @@ def test_filter_options_suppress_untrustworthy_wuzzuf_legacy_values(session_fact
     status, options = get("/jobs/filter-options")
 
     assert status == 200
-    assert options["categories"] == ["Engineering", "Sales", "Software Development"]
+    assert options["categories"] == ["Sales"]
     assert options["industries"] == ["Retail"]
     assert options["job_types"] == ["Flexible", "Full Time"]
     assert options["work_modes"] == ["Field-based", "Remote"]
@@ -416,7 +416,7 @@ def test_filter_options_strictly_validate_wuzzuf_taxonomy_and_experience(session
         "job_type": "Full TimePart Time", "work_mode": "RemoteHybrid",
         "experience_level": "1+ years2 - 3 years10 - 15 years",
     }, {
-        "source": "WUZZUF", "category": "Administration, Sales/Retail",
+        "source": "WUZZUF", "category": "Administration, Analyst/Research",
         "job_type": "Freelance / Project", "work_mode": "On-site",
         "experience_level": "1+ years",
     }, {
@@ -438,7 +438,7 @@ def test_filter_options_strictly_validate_wuzzuf_taxonomy_and_experience(session
 
     status, options = get("/jobs/filter-options")
     assert status == 200
-    assert options["categories"] == ["Administration", "Sales/Retail"]
+    assert options["categories"] == ["Administration", "Analyst/Research"]
     assert options["job_types"] == ["Freelance / Project"]
     assert options["work_modes"] == ["On-site"]
     assert options["experience_levels"] == [

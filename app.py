@@ -79,8 +79,8 @@ def trustworthy_filter_values(session, column, delimited=False, allowed=None):
 
     Industry has no trustworthy listing source, so callers omit every WUZZUF
     industry. Exact classifications use the platform's finite normalized
-    vocabulary. Categories reject the characteristic undelimited CamelCase
-    joins produced by the legacy parser; values are never split heuristically.
+    vocabulary. A WUZZUF category value is accepted only when every delimited
+    component is canonical; malformed values are never split heuristically.
     """
     rows = session.query(column, Job.source).filter(column.isnot(None)).all()
     values = set()
