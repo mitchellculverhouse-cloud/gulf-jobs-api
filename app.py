@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Numeric, case, cast, func, or_, text
 
 from database import Session, init_db
-from importer import run_import
+from importer import backfill_wuzzuf_filters, run_import
 from models import Job
 from schemas import JobFilterOptionsResponse, JobResult, PaginatedJobsResponse
 
@@ -276,14 +276,18 @@ def get_job(job_id: Annotated[int, Path(ge=1)]):
         return job_to_dict(job)
 
 
-
-@app.post("/run-import")
-def run_import_endpoint(x_import_key: Annotated[Optional[str], Header()] = None):
+def require_import_key(x_import_key):
+    """Apply the shared secret check used by protected maintenance operations."""
     expected_key = os.environ.get("IMPORT_API_KEY")
     if not expected_key:
         raise HTTPException(status_code=503, detail="Import endpoint is not configured")
     if not x_import_key or not hmac.compare_digest(x_import_key, expected_key):
         raise HTTPException(status_code=401, detail="Invalid import key")
+
+
+@app.post("/run-import")
+def run_import_endpoint(x_import_key: Annotated[Optional[str], Header()] = None):
+    require_import_key(x_import_key)
     if not IMPORT_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Import already running")
 
@@ -296,3 +300,20 @@ def run_import_endpoint(x_import_key: Annotated[Optional[str], Header()] = None)
         IMPORT_LOCK.release()
 
     return {"status": "completed"}
+
+
+@app.post("/maintenance/backfill-wuzzuf-filters")
+def backfill_wuzzuf_filters_endpoint(
+    x_import_key: Annotated[Optional[str], Header()] = None,
+):
+    require_import_key(x_import_key)
+    if not IMPORT_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Import already running")
+    try:
+        summary = backfill_wuzzuf_filters()
+    except Exception:
+        logger.exception("WUZZUF filter backfill failed")
+        raise HTTPException(status_code=500, detail="WUZZUF filter backfill failed") from None
+    finally:
+        IMPORT_LOCK.release()
+    return {"status": "completed", **summary}

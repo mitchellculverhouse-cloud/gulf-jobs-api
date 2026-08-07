@@ -24,7 +24,9 @@ class Response:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise requests.HTTPError(str(self.status_code))
+            error = requests.HTTPError(str(self.status_code))
+            error.response = self
+            raise error
 
 
 class FakeHTTP:
@@ -623,4 +625,114 @@ def test_commit_failure_rolls_back_and_later_job_continues(monkeypatch, db_facto
     db = db_factory()
     assert db.query(Job).count() == 1
     assert db.query(Job).one().title == "Operations Manager"
+    db.close()
+
+
+def test_wuzzuf_filter_backfill_repairs_only_authoritative_fields(monkeypatch, db_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
+    db = db_factory()
+    legacy = Job(
+        title="Keep title", description="Keep description", skills="Keep skills",
+        company_name="Keep company", country="Kuwait", city="Keep city",
+        category="ManagementEngineering", industry="ConstructionTechnology",
+        job_type="Full-timePart-time", work_mode="Remote WorkWork from Office",
+        salary_min="999", apply_url=url, source="WUZZUF",
+    )
+    db.add(legacy)
+    db.commit()
+    original_id = legacy.id
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    http = FakeHTTP({url: [Response(fixture("wuzzuf_live_english_detail.html"))]})
+
+    result = importer.backfill_wuzzuf_filters(
+        session_factory=db_factory, http_session=http, sleeper=lambda _: None)
+
+    assert result == {"scanned": 1, "updated": 1, "unchanged": 0,
+                      "skipped_missing_page": 0,
+                      "skipped_no_authoritative_data": 0, "failed": 0}
+    db = db_factory()
+    saved = db.query(Job).one()
+    assert (saved.category, saved.industry, saved.job_type, saved.work_mode) == (
+        "Administration", "Business Services", "Full Time", "On-site")
+    assert (saved.id, saved.apply_url, saved.source) == (original_id, url, "WUZZUF")
+    assert (saved.title, saved.description, saved.skills, saved.company_name,
+            saved.country, saved.city, saved.salary_min) == (
+        "Keep title", "Keep description", "Keep skills", "Keep company",
+        "Kuwait", "Keep city", "999")
+    db.close()
+
+
+def test_backfill_preserves_non_authoritative_field_and_is_idempotent(monkeypatch, db_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/structured-sources-engineer"
+    html = fixture("wuzzuf_mixed_sources_detail.html").replace(
+        '"workTypes":[{"displayedName":"Full-time"},{"displayedName":"Part_time"}],', "")
+    db = db_factory()
+    db.add(Job(title="Engineer", apply_url=url, source="WUZZUF",
+               category="Bad category", industry="Bad industry",
+               job_type="Keep contract", work_mode="Bad mode"))
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    http = FakeHTTP({url: [Response(html), Response(html)]})
+
+    first = importer.backfill_wuzzuf_filters(db_factory, http, lambda _: None)
+    second = importer.backfill_wuzzuf_filters(db_factory, http, lambda _: None)
+
+    assert first["updated"] == 1
+    assert second["unchanged"] == 1 and second["updated"] == 0
+    db = db_factory()
+    assert db.query(Job).one().job_type == "Keep contract"
+    db.close()
+
+
+def test_backfill_skips_gone_and_non_authoritative_pages(monkeypatch, db_factory):
+    gone = "https://wuzzuf.net/jobs/p/gone"
+    fallback = "https://wuzzuf.net/jobs/p/fallback"
+    db = db_factory()
+    db.add_all([
+        Job(title="Gone", apply_url=gone, source="WUZZUF", category="Keep"),
+        Job(title="Fallback", apply_url=fallback, source="WUZZUF", category="Keep"),
+    ])
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    http = FakeHTTP({gone: [Response(status=410)], fallback: [Response(
+        '<script type="application/ld+json">{"@type":"JobPosting",'
+        '"title":"Fallback","occupationalCategory":"Do not trust"}</script>')]})
+
+    result = importer.backfill_wuzzuf_filters(db_factory, http, lambda _: None)
+
+    assert result["skipped_missing_page"] == 1
+    assert result["skipped_no_authoritative_data"] == 1
+    db = db_factory()
+    assert {job.category for job in db.query(Job).all()} == {"Keep"}
+    db.close()
+
+
+def test_backfill_failure_does_not_stop_later_job_and_ignores_other_sources(
+        monkeypatch, db_factory):
+    failed = "https://wuzzuf.net/jobs/p/failed"
+    repaired = "https://wuzzuf.net/saudi/jobs/p/live-office-coordinator-riyadh-saudi-arabia"
+    other = "https://example.com/jobs/other"
+    db = db_factory()
+    db.add_all([
+        Job(title="Failed", apply_url=failed, source="WUZZUF", category="Keep"),
+        Job(title="Repair", apply_url=repaired, source="WUZZUF", category="Bad"),
+        Job(title="Other", apply_url=other, source="OTHER", category="Untouched"),
+    ])
+    db.commit()
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source()])
+    http = FakeHTTP({
+        failed: [requests.ConnectionError("network")],
+        repaired: [Response(fixture("wuzzuf_live_english_detail.html"))],
+    })
+
+    result = importer.backfill_wuzzuf_filters(db_factory, http, lambda _: None)
+
+    assert result["scanned"] == 2 and result["failed"] == 1 and result["updated"] == 1
+    db = db_factory()
+    assert db.query(Job).filter(Job.apply_url == other).one().category == "Untouched"
+    assert db.query(Job).filter(Job.apply_url == repaired).one().category == "Administration"
     db.close()
