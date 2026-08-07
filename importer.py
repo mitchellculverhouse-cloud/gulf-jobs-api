@@ -285,13 +285,14 @@ def _from_wuzzuf_store(store, url):
     roles = ", ".join(_named_values(job.get("workRoles")))
     skills = ", ".join(_named_values(job.get("keywords")))
     work_types = ", ".join(_named_values(job.get("workTypes"), normalize_job_type))
-    return {
+    industry = ", ".join(_named_values(company.get("workIndustries")))
+    result = {
         "title": _as_text(job.get("title")), "company_name": company_name,
         "country": normalize_country(_named(location.get("country") or {})),
         "city": normalize_city(_named(location.get("city") or {})),
         "area": _named(location.get("area") or {}), "description": description,
         "skills": skills, "category": roles,
-        "industry": ", ".join(_named_values(company.get("workIndustries"))),
+        "industry": industry,
         "salary_min": _as_text(salary.get("min")), "salary_max": _as_text(salary.get("max")),
         "salary_currency": normalize_currency((salary.get("currency") or {}).get("code")),
         "salary_period": normalize_salary_period((salary.get("period") or {}).get("name")),
@@ -302,6 +303,10 @@ def _from_wuzzuf_store(store, url):
         "date_posted": _wuzzuf_date(job.get("postedAt")),
         "closing_date": _wuzzuf_date(job.get("expireAt")),
     }
+    result["_authoritative_fields"] = tuple(
+        field for field in ("category", "industry") if result[field]
+    )
+    return result
 
 
 def _section_content(soup, headings):
@@ -439,9 +444,11 @@ def _historical_company_placeholder(value):
     return isinstance(value, str) and value.strip().casefold() == "wuzzuf"
 
 
-def _should_enrich(field, existing, scraped):
+def _should_enrich(field, existing, scraped, authoritative=False):
     if _missing(scraped):
         return False
+    if authoritative:
+        return scraped != existing
     if field in ("description", "company_name"):
         if not _meaningful_text(scraped):
             return False
@@ -455,9 +462,12 @@ def _should_enrich(field, existing, scraped):
 
 def _enrich_job(job, values):
     changed = False
+    authoritative_fields = set(values.get("_authoritative_fields", ())) & {"category", "industry"}
     for field in JOB_FIELDS:
         scraped = values.get(field)
-        if _should_enrich(field, getattr(job, field), scraped):
+        if _should_enrich(
+            field, getattr(job, field), scraped, field in authoritative_fields
+        ):
             setattr(job, field, scraped)
             changed = True
     return changed

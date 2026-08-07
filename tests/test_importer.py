@@ -136,6 +136,7 @@ def test_wuzzuf_structured_multi_values_are_preserved_normalized_and_deduplicate
     assert job["category"] == "Management, Engineering"
     assert job["industry"] == "Construction, Technology"
     assert job["job_type"] == "Full Time, Part Time"
+    assert job["_authoritative_fields"] == ("category", "industry")
 
 
 def test_arabic_url_selects_embedded_entity_without_locale_prefix():

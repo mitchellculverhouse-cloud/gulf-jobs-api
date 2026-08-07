@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app as app_module
+import importer
 from models import Base, Job
 
 
@@ -330,6 +331,45 @@ def test_exact_filter_options_keep_compound_values_submittable(session_factory):
         ("experience_level", options["experience_levels"][0]),
     ):
         assert get(**{name: value})[1]["total"] == 1
+
+
+def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/legacy-taxonomy"
+    malformed_category = (
+        "OtherInstallation/Maintenance/RepairInstallation/Maintenance/Repair"
+    )
+    add_jobs(session_factory, {
+        "apply_url": url, "source": "WUZZUF", "category": malformed_category,
+        "industry": "ConstructionTechnologyBusiness Services",
+    })
+    values = {
+        "title": "Engineer", "apply_url": url, "source": "WUZZUF",
+        "category": "Installation/Maintenance/Repair, Other",
+        "industry": "Construction, Business Services",
+        "_authoritative_fields": ("category", "industry"),
+    }
+
+    with session_factory() as session:
+        original = session.query(Job).one()
+        original_id = original.id
+        assert importer.save_job(session, values) == ("updated", 0)
+        repaired = session.get(Job, original_id)
+        assert repaired.apply_url == url
+        assert repaired.category == "Installation/Maintenance/Repair, Other"
+        assert repaired.industry == "Construction, Business Services"
+        assert importer.save_job(session, values) == ("unchanged", 0)
+        assert session.query(Job).count() == 1
+
+    status, options = get("/jobs/filter-options")
+    assert status == 200
+    assert options["categories"] == ["Installation/Maintenance/Repair", "Other"]
+    assert options["industries"] == ["Business Services", "Construction"]
+    assert malformed_category not in options["categories"]
+    for field, query_name in (("categories", "category"), ("industries", "industry")):
+        for option in options[field]:
+            result_status, result = get(**{query_name: option})
+            assert result_status == 200
+            assert result["total"] == 1
 
 
 def test_filter_options_empty_database_returns_stable_empty_contract(session_factory):
