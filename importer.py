@@ -217,6 +217,18 @@ def _named(value):
     return _as_text(value.get("displayedName") or value.get("name")) if isinstance(value, dict) else _as_text(value)
 
 
+def _named_values(values, normalizer=clean_text):
+    """Preserve ordered structured labels while removing blank duplicates."""
+    result = []
+    seen = set()
+    for item in values or []:
+        value = normalizer(_named(item))
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
 def _experience(years):
     if not isinstance(years, dict):
         return ""
@@ -270,16 +282,16 @@ def _from_wuzzuf_store(store, url):
     description = description if _meaningful_text(description) else ""
     if requirements:
         description = f"{description}\n\nJob Requirements\n{requirements}" if description else requirements
-    roles = ", ".join(filter(None, (_named(item) for item in job.get("workRoles") or [])))
-    skills = ", ".join(filter(None, (_named(item) for item in job.get("keywords") or [])))
-    work_types = ", ".join(filter(None, (_named(item) for item in job.get("workTypes") or [])))
+    roles = ", ".join(_named_values(job.get("workRoles")))
+    skills = ", ".join(_named_values(job.get("keywords")))
+    work_types = ", ".join(_named_values(job.get("workTypes"), normalize_job_type))
     return {
         "title": _as_text(job.get("title")), "company_name": company_name,
         "country": normalize_country(_named(location.get("country") or {})),
         "city": normalize_city(_named(location.get("city") or {})),
         "area": _named(location.get("area") or {}), "description": description,
         "skills": skills, "category": roles,
-        "industry": ", ".join(filter(None, (_named(item) for item in company.get("workIndustries") or []))),
+        "industry": ", ".join(_named_values(company.get("workIndustries"))),
         "salary_min": _as_text(salary.get("min")), "salary_max": _as_text(salary.get("max")),
         "salary_currency": normalize_currency((salary.get("currency") or {}).get("code")),
         "salary_period": normalize_salary_period((salary.get("period") or {}).get("name")),
