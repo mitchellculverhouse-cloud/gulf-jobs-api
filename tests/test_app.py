@@ -661,7 +661,12 @@ def test_wuzzuf_backfill_rejects_missing_or_wrong_key(monkeypatch, headers):
 def test_authenticated_wuzzuf_backfill_returns_summary(monkeypatch):
     summary = {"scanned": 3, "updated": 1, "unchanged": 1,
                "skipped_missing_page": 1,
-               "skipped_no_authoritative_data": 0, "failed": 0}
+               "skipped_no_authoritative_data": 0, "failed": 0,
+               "failure_diagnostics": {
+                   "http_403": 0, "http_429": 0, "http_5xx": 0,
+                   "http_other": 0, "timeout": 0, "connection_error": 0,
+                   "parser_or_unexpected": 0, "database": 0,
+               }}
     monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
     monkeypatch.setattr(app_module, "backfill_wuzzuf_filters", lambda: summary)
 
