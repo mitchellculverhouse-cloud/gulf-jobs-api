@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -335,6 +335,31 @@ def require_import_key(x_import_key):
         raise HTTPException(status_code=401, detail="Invalid import key")
 
 
+def valid_content_length(value):
+    """Return a valid non-negative Content-Length, otherwise None."""
+    value = (value or "").strip()
+    return int(value) if value.isascii() and value.isdigit() else None
+
+
+def safe_hostname(url):
+    """Return a URL hostname without allowing malformed input to escape."""
+    try:
+        return urlsplit(url).hostname or None
+    except (TypeError, ValueError):
+        return None
+
+
+def redirect_target_host(configured_url, location):
+    """Resolve a redirect target for reporting only, without requesting it."""
+    if not location:
+        return None
+    try:
+        target = urljoin(configured_url, location)
+    except (TypeError, ValueError):
+        return None
+    return safe_hostname(target)
+
+
 def source_connectivity_result(http, source):
     """Check one trusted configured source without parsing or persistence."""
     configured_url = source["url"]
@@ -354,6 +379,8 @@ def source_connectivity_result(http, source):
             configured_url,
             headers=HEADERS,
             timeout=source.get("timeout", 45),
+            allow_redirects=False,
+            stream=True,
         )
     except requests.Timeout:
         result["error_category"] = "timeout"
@@ -367,14 +394,21 @@ def source_connectivity_result(http, source):
                          source.get("name"))
         result["error_category"] = "unexpected_error"
     else:
-        result.update({
-            "http_status": response.status_code,
-            "content_type": response.headers.get("Content-Type"),
-            "response_size_bytes": len(response.content),
-            "redirected": bool(response.history),
-            "final_host": (urlsplit(response.url).hostname or None),
-            "reachable": 200 <= response.status_code < 400,
-        })
+        try:
+            is_redirect = 300 <= response.status_code < 400
+            result.update({
+                "http_status": response.status_code,
+                "content_type": response.headers.get("Content-Type"),
+                "response_size_bytes": valid_content_length(
+                    response.headers.get("Content-Length")),
+                "redirected": is_redirect,
+                "final_host": redirect_target_host(
+                    configured_url, response.headers.get("Location")
+                ) if is_redirect else safe_hostname(configured_url),
+                "reachable": 200 <= response.status_code < 300,
+            })
+        finally:
+            response.close()
     return result
 
 
