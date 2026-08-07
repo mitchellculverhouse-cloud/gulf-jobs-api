@@ -28,6 +28,26 @@ JOB_FIELDS = (
 )
 WUZZUF_HOSTS = {"wuzzuf.net", "www.wuzzuf.net"}
 WUZZUF_FILTER_FIELDS = ("category", "industry", "job_type", "work_mode")
+WUZZUF_CATEGORIES = {
+    "Accounting/Finance", "Administration", "Analyst/Research", "Banking",
+    "Business Development",
+    "C-Level Executive/GM/Director", "Creative/Design/Art", "Customer Service/Support",
+    "Education/Teaching", "Engineering - Construction/Civil/Architecture",
+    "Engineering - Mechanical/Electrical", "Engineering - Oil & Gas/Energy",
+    "Engineering - Other", "Engineering - Telecom/Technology",
+    "Hospitality/Hotels/Food Services", "Human Resources", "IT/Software Development",
+    "Installation/Maintenance/Repair", "Legal", "Logistics/Supply Chain",
+    "Manufacturing/Production", "Marketing/PR/Advertising", "Medical/Healthcare",
+    "Media/Journalism/Publishing", "Operations/Management", "Pharmaceutical",
+    "Project/Program Management", "Purchasing/Procurement", "Quality", "R&D/Science",
+    "Sales/Retail", "Sports and Leisure", "Strategy/Consulting", "Tourism/Travel",
+    "Training/Instructor", "Writing/Editorial",
+}
+WUZZUF_JOB_TYPES = {
+    "Full Time", "Part Time", "Contract", "Temporary", "Internship",
+    "Freelance / Project",
+}
+WUZZUF_WORK_MODES = {"Remote", "Hybrid", "On-site"}
 WUZZUF_BACKFILL_FAILURE_DIAGNOSTICS = (
     "http_403", "http_429", "http_5xx", "http_other",
     "timeout", "connection_error", "parser_or_unexpected", "database",
@@ -78,10 +98,60 @@ def parse_wuzzuf_listing(html, base_url):
                 continue
             seen.add(url)
             listing_values = _wuzzuf_listing_classifications(store, url)
+            card_values = _wuzzuf_card_classifications(anchor, url, base_url)
+            for field, value in card_values.items():
+                if field == "_authoritative_fields":
+                    continue
+                listing_values.setdefault(field, value)
+            authoritative = tuple(
+                field for field in ("category", "job_type", "work_mode")
+                if listing_values.get(field)
+            )
+            if authoritative:
+                listing_values["_authoritative_fields"] = authoritative
             jobs.append({"title": title, "link": url, **listing_values})
         except (KeyError, TypeError, ValueError):
             continue
     return jobs
+
+
+def _wuzzuf_card_classifications(anchor, url, base_url):
+    """Extract exact WUZZUF taxonomy labels from the anchor's own job card."""
+    card = None
+    for parent in anchor.parents:
+        if parent.name not in {"article", "li", "div"}:
+            continue
+        job_urls = {
+            canonical_url(item.get("href"), base_url)
+            for item in parent.find_all("a", href=True)
+            if _is_wuzzuf_job_url(canonical_url(item.get("href"), base_url), WUZZUF_HOSTS)
+        }
+        if job_urls == {url}:
+            card = parent
+            if parent.name in {"article", "li"} or parent.get("data-testid") == "job-card":
+                break
+        elif card is not None:
+            break
+    if card is None:
+        return {}
+
+    labels = {
+        clean_text(item.get_text(" ", strip=True))
+        for item in card.find_all(["a", "span", "li"])
+        if item is not anchor
+    }
+    categories = [value for value in WUZZUF_CATEGORIES if value in labels]
+    job_types = [value for value in WUZZUF_JOB_TYPES if value in labels]
+    work_modes = [value for value in WUZZUF_WORK_MODES if value in labels]
+    values = {
+        "category": ", ".join(sorted(categories)),
+        "job_type": ", ".join(sorted(job_types)),
+        "work_mode": work_modes[0] if len(work_modes) == 1 else "",
+    }
+    authoritative = tuple(field for field, value in values.items() if value)
+    if authoritative:
+        values["_authoritative_fields"] = authoritative
+    return {field: value for field, value in values.items() if value}
 
 
 def _wuzzuf_listing_classifications(store, url):
