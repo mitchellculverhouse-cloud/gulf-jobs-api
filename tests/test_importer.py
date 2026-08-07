@@ -552,6 +552,49 @@ def test_listing_classifications_override_detail_classifications_only(
     assert saved.industry == "Technology"
     db.close()
 
+
+def test_listing_merge_preserves_authoritative_detail_industry_and_is_idempotent(
+        monkeypatch, db_factory):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    job_url = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    listing_html = fixture("wuzzuf_listing.html").replace(
+        'href="/jobs/p/beta-accountant/"', 'href="/companies/beta"')
+    detail_html = fixture("wuzzuf_mixed_sources_detail.html").replace(
+        "saudi/jobs/p/structured-sources-engineer", "jobs/p/alpha-software-engineer")
+    db = db_factory()
+    db.add(Job(
+        title="Keep title", description="Keep description", skills="Keep skills",
+        company_name="Keep company", country="Qatar", city="Keep city",
+        category="Stale category", industry="Stale industry",
+        job_type="Stale type", work_mode="Stale mode", salary_min="999",
+        apply_url=job_url, source="WUZZUF",
+    ))
+    db.commit()
+    original_id = db.query(Job).one().id
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    http = FakeHTTP({
+        listing_url: [Response(listing_html), Response(listing_html)],
+        job_url: [Response(detail_html), Response(detail_html)],
+    })
+
+    first = importer.run_import(db_factory, http, lambda _: None)
+    second = importer.run_import(db_factory, http, lambda _: None)
+
+    assert first["updated"] == 1 and first["inserted"] == 0
+    assert second["unchanged"] == 1 and second["updated"] == 0
+    db = db_factory()
+    saved = db.query(Job).one()
+    assert (saved.id, saved.category, saved.job_type, saved.work_mode) == (
+        original_id, "Software Development, Engineering", "Full Time", "Remote")
+    assert saved.industry == "Construction, Business Services"
+    assert (saved.title, saved.description, saved.skills, saved.company_name,
+            saved.country, saved.city, saved.salary_min) == (
+        "Keep title", "Keep description", "Keep skills", "Keep company",
+        "Qatar", "Keep city", "999")
+    db.close()
+
+
 def test_meaningless_detail_isolated_and_later_job_continues(monkeypatch, db_factory, capsys):
     listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
     first = "https://wuzzuf.net/jobs/p/alpha-software-engineer"

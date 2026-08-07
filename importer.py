@@ -719,12 +719,15 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
                     values["title"] = job["title"]
                 if source.get("detail_parser") == "wuzzuf" and not validate_wuzzuf_detail(values):
                     raise ValueError("no meaningful WUZZUF detail enrichment")
-                listing_authoritative = set(job.get("_authoritative_fields", ()))
+                detail_authoritative = set(values.get("_authoritative_fields", ()))
+                listing_authoritative = set(job.get("_authoritative_fields", ())) & {
+                    "category", "job_type", "work_mode",
+                }
                 if listing_authoritative:
                     values.update({field: job[field] for field in listing_authoritative})
                     values["_authoritative_fields"] = tuple(
-                        field for field in ("category", "job_type", "work_mode")
-                        if field in listing_authoritative
+                        field for field in WUZZUF_FILTER_FIELDS
+                        if field in detail_authoritative | listing_authoritative
                     )
                 db = session_factory()
                 try:
