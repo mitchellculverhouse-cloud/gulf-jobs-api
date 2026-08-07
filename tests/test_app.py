@@ -410,6 +410,49 @@ def test_filter_options_suppress_untrustworthy_wuzzuf_legacy_values(session_fact
             assert get(**{query_name: option})[1]["total"] >= 1
 
 
+def test_filter_options_strictly_validate_wuzzuf_taxonomy_and_experience(session_factory):
+    add_jobs(session_factory, {
+        "source": "WUZZUF", "category": "AdministrationSales/Retail",
+        "job_type": "Full TimePart Time", "work_mode": "RemoteHybrid",
+        "experience_level": "1+ years2 - 3 years10 - 15 years",
+    }, {
+        "source": "WUZZUF", "category": "Administration, Sales/Retail",
+        "job_type": "Freelance / Project", "work_mode": "On-site",
+        "experience_level": "1+ years",
+    }, {
+        "source": "WUZZUF", "category": None, "job_type": None, "work_mode": None,
+        "experience_level": "4+ years",
+    }, {
+        "source": "WUZZUF", "category": None, "job_type": None, "work_mode": None,
+        "experience_level": "2 - 3 years",
+    }, {
+        "source": "WUZZUF", "category": None, "job_type": None, "work_mode": None,
+        "experience_level": "10 - 15 years",
+    }, {
+        "source": "WUZZUF", "category": None, "job_type": None, "work_mode": None,
+        "experience_level": "Up to 2 years",
+    }, {
+        "source": "Employer", "category": None, "job_type": None, "work_mode": None,
+        "experience_level": "Future source format",
+    })
+
+    status, options = get("/jobs/filter-options")
+    assert status == 200
+    assert options["categories"] == ["Administration", "Sales/Retail"]
+    assert options["job_types"] == ["Freelance / Project"]
+    assert options["work_modes"] == ["On-site"]
+    assert options["experience_levels"] == [
+        "1+ years", "10 - 15 years", "2 - 3 years", "4+ years",
+        "Future source format", "Up to 2 years",
+    ]
+    for option_name, query_name in (
+        ("categories", "category"), ("job_types", "job_type"),
+        ("work_modes", "work_mode"), ("experience_levels", "experience_level"),
+    ):
+        for option in options[option_name]:
+            assert get(**{query_name: option})[1]["total"] >= 1
+
+
 def test_filter_options_empty_database_returns_stable_empty_contract(session_factory):
     status, body = get("/jobs/filter-options")
 
@@ -609,10 +652,13 @@ def test_import_rejects_missing_empty_or_incorrect_key(monkeypatch, headers):
 def test_authenticated_import_runs_once_and_returns_success(monkeypatch):
     calls = []
     monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
-    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True))
+    summary = {"listing_links_found": 4, "unique_job_urls": 4, "inserted": 1,
+               "updated": 2, "unchanged": 1, "failed_detail_pages": 0,
+               "duplicate_database_urls": 0}
+    monkeypatch.setattr(app_module, "run_import", lambda: calls.append(True) or summary)
 
     assert post("/run-import", headers={"X-Import-Key": "correct-key"}) == (
-        200, {"status": "completed"}
+        200, {"status": "completed", **summary}
     )
     assert calls == [True]
 

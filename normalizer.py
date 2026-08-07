@@ -118,6 +118,8 @@ def normalize_job_type(value):
         "parttime": "Part Time", "part time": "Part Time", "part-time": "Part Time",
         "contractor": "Contract", "contract": "Contract", "temporary": "Temporary",
         "intern": "Internship", "internship": "Internship",
+        "freelance / project": "Freelance / Project",
+        "freelance/project": "Freelance / Project", "freelance": "Freelance / Project",
     }
     return aliases.get(comparable, value)
 

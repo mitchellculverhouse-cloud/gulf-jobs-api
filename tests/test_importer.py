@@ -82,6 +82,35 @@ def test_listing_classifications_are_structured_and_associated_by_job_url():
     assert "Python" not in jobs[0]["category"] and "SQL" not in jobs[0]["category"]
 
 
+def test_server_rendered_listing_cards_extract_exact_classifications_per_url():
+    jobs = importer.parse_wuzzuf_listing(
+        fixture("wuzzuf_listing_cards.html"),
+        "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia",
+    )
+    by_url = {job["link"]: job for job in jobs}
+
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-admin-riyadh"] == {
+        "title": "Office Administrator",
+        "link": "https://wuzzuf.net/saudi/jobs/p/card-admin-riyadh",
+        "category": "Administration", "job_type": "Full Time",
+        "work_mode": "On-site",
+        "_authoritative_fields": ("category", "job_type", "work_mode"),
+    }
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-sales-jeddah"]["job_type"] == "Part Time"
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-sales-jeddah"]["work_mode"] == "Remote"
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-intern-dammam"]["job_type"] == "Internship"
+    assert by_url["https://wuzzuf.net/saudi/jobs/p/card-intern-dammam"]["work_mode"] == "Hybrid"
+    freelance = by_url["https://wuzzuf.net/saudi/jobs/p/card-freelance-khobar"]
+    assert freelance["job_type"] == "Freelance / Project"
+    assert "work_mode" not in freelance
+    assert {job["category"] for job in jobs} == {
+        "Administration", "Sales/Retail", "IT/Software Development",
+        "Installation/Maintenance/Repair",
+    }
+    assert not ({"Microsoft Office", "Communication Skills", "CRM", "Python",
+                 "Troubleshooting"} & {job["category"] for job in jobs})
+
+
 def test_jsonld_extracts_enriched_company_location_salary_and_dates():
     job = importer.parse_wuzzuf_detail(fixture("wuzzuf_jsonld_detail.html"), "https://wuzzuf.net/jobs/p/alpha", source())
     assert job["company_name"] == "Gulf Technology Co."

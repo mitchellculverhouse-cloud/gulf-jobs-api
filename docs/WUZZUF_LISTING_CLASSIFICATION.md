@@ -1,9 +1,12 @@
 # WUZZUF listing classification
 
-WUZZUF listing pages expose job-associated `workRoles`, `workTypes`, and
-`workplaceArrangement` values in their server-rendered state. The importer
-matches each state entity to its canonical job URL and treats only those three
-values as authoritative for category, job type, and work mode respectively.
+WUZZUF listing pages expose job-associated classifications both in listing-card
+HTML and, on some page versions, in `workRoles`, `workTypes`, and
+`workplaceArrangement` values in embedded state. The importer matches embedded
+entities by canonical job URL and also reads exact taxonomy labels only from the
+HTML card containing that URL. A finite WUZZUF category vocabulary prevents
+skill links on the same card from becoming categories. Missing work mode stays
+missing.
 
 Listing state does not provide a sufficiently trustworthy employer-industry
 source. The importer therefore does not derive industry from roles, titles,

@@ -12,7 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Numeric, case, cast, func, or_, text
 
 from database import Session, init_db
-from importer import backfill_wuzzuf_filters, run_import
+from importer import (
+    WUZZUF_CATEGORIES, WUZZUF_JOB_TYPES, WUZZUF_WORK_MODES,
+    backfill_wuzzuf_filters, run_import,
+)
 from models import Job
 from schemas import JobFilterOptionsResponse, JobResult, PaginatedJobsResponse
 
@@ -65,8 +68,10 @@ def cleaned_delimited_values(session, column):
     return sorted({part.strip() for value in values for part in value.split(",") if part.strip()})
 
 
-WUZZUF_JOB_TYPES = {"Full Time", "Part Time", "Contract", "Temporary", "Internship"}
-WUZZUF_WORK_MODES = {"Remote", "Hybrid", "On-site"}
+WUZZUF_EXPERIENCE = re.compile(
+    r"^(?:\d+\+ years|\d+\s*-\s*\d+ years|Up to \d+ years)$",
+    re.IGNORECASE,
+)
 
 
 def trustworthy_filter_values(session, column, delimited=False, allowed=None):
@@ -89,12 +94,20 @@ def trustworthy_filter_values(session, column, delimited=False, allowed=None):
             parts = [part.strip() for part in value.split(",") if part.strip()]
             if allowed is not None and (not parts or any(part not in allowed for part in parts)):
                 continue
-            if delimited and any(re.search(r"[a-z][A-Z]", part) for part in parts):
+            if delimited and column is Job.category and any(
+                    part not in WUZZUF_CATEGORIES for part in parts):
                 continue
         else:
             parts = [part.strip() for part in value.split(",") if part.strip()]
         values.update(parts if delimited else [value])
     return sorted(values)
+
+
+def trustworthy_experience_values(session):
+    rows = session.query(Job.experience_level, Job.source).filter(
+        Job.experience_level.isnot(None)).all()
+    return sorted({value.strip() for value, source in rows if value and value.strip()
+                   and (source != "WUZZUF" or WUZZUF_EXPERIENCE.fullmatch(value.strip()))})
 
 
 def numeric_salary(column, dialect_name):
@@ -293,7 +306,7 @@ def get_job_filter_options():
             "industries": trustworthy_filter_values(session, Job.industry, delimited=True),
             "job_types": trustworthy_filter_values(session, Job.job_type, allowed=WUZZUF_JOB_TYPES),
             "work_modes": trustworthy_filter_values(session, Job.work_mode, allowed=WUZZUF_WORK_MODES),
-            "experience_levels": cleaned_distinct_values(session, Job.experience_level),
+            "experience_levels": trustworthy_experience_values(session),
             "currencies": cleaned_distinct_values(session, Job.salary_currency),
             "salary_periods": cleaned_distinct_values(session, Job.salary_period),
             "languages": cleaned_distinct_values(session, Job.languages_required),
@@ -325,14 +338,14 @@ def run_import_endpoint(x_import_key: Annotated[Optional[str], Header()] = None)
         raise HTTPException(status_code=409, detail="Import already running")
 
     try:
-        run_import()
+        summary = run_import() or {}
     except Exception:
         logger.exception("Import failed")
         raise HTTPException(status_code=500, detail="Import failed") from None
     finally:
         IMPORT_LOCK.release()
 
-    return {"status": "completed"}
+    return {"status": "completed", **summary}
 
 
 @app.post("/maintenance/backfill-wuzzuf-filters")
