@@ -20,6 +20,12 @@ RESULT_FIELDS = {
     "apply_url", "source",
 }
 
+FILTER_OPTION_FIELDS = {
+    "countries", "cities", "categories", "industries", "job_types",
+    "work_modes", "experience_levels", "currencies", "salary_periods",
+    "languages",
+}
+
 
 async def _asgi_request(path, method="GET", params=None, headers=None):
     messages = []
@@ -241,6 +247,85 @@ def test_openapi_exposes_paginated_response_schema(session_factory):
     assert status == 200
     schema = body["paths"]["/jobs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert schema["$ref"].endswith("/PaginatedJobsResponse")
+
+
+def test_filter_options_clean_deduplicate_and_sort_values(session_factory):
+    add_jobs(
+        session_factory,
+        {
+            "country": " Saudi Arabia ", "city": "Riyadh", "category": "Engineering",
+            "industry": "Construction", "job_type": " Full Time ",
+            "work_mode": "On-site", "experience_level": "Senior",
+            "salary_currency": " SAR ", "salary_period": "Monthly",
+            "languages_required": "Arabic, English",
+        },
+        {
+            "country": "Saudi Arabia", "city": " Dubai ", "category": "Technology",
+            "industry": "Software", "job_type": "Full Time", "work_mode": " Remote ",
+            "experience_level": "Mid", "salary_currency": "SAR",
+            "salary_period": " Annual ", "languages_required": "English",
+        },
+        {
+            "country": None, "city": "", "category": "   ", "industry": None,
+            "job_type": "\t", "work_mode": "", "experience_level": None,
+            "salary_currency": "   ", "salary_period": None,
+            "languages_required": "  ",
+        },
+    )
+
+    status, body = get("/jobs/filter-options")
+
+    assert status == 200
+    assert set(body) == FILTER_OPTION_FIELDS
+    assert all(isinstance(body[field], list) for field in FILTER_OPTION_FIELDS)
+    assert body == {
+        "countries": ["Saudi Arabia"],
+        "cities": ["Dubai", "Riyadh"],
+        "categories": ["Engineering", "Technology"],
+        "industries": ["Construction", "Software"],
+        "job_types": ["Full Time"],
+        "work_modes": ["On-site", "Remote"],
+        "experience_levels": ["Mid", "Senior"],
+        "currencies": ["SAR"],
+        "salary_periods": ["Annual", "Monthly"],
+        "languages": ["Arabic, English", "English"],
+    }
+
+
+def test_filter_options_empty_database_returns_stable_empty_contract(session_factory):
+    status, body = get("/jobs/filter-options")
+
+    assert status == 200
+    assert body == {field: [] for field in FILTER_OPTION_FIELDS}
+
+
+def test_filter_options_static_route_is_not_job_id_validation(session_factory):
+    status, body = get("/jobs/filter-options")
+
+    assert status == 200
+    assert set(body) == FILTER_OPTION_FIELDS
+    assert "detail" not in body
+
+
+def test_filter_options_is_read_only(session_factory):
+    add_jobs(session_factory, {"country": " UAE ", "languages_required": " English "})
+
+    assert get("/jobs/filter-options")[0] == 200
+
+    with session_factory() as session:
+        job = session.get(Job, 1)
+        assert job.country == " UAE "
+        assert job.languages_required == " English "
+
+
+def test_openapi_exposes_filter_options_response_schema(session_factory):
+    status, body = get("/openapi.json")
+    schema = body["paths"]["/jobs/filter-options"]["get"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"]
+
+    assert status == 200
+    assert schema["$ref"].endswith("/JobFilterOptionsResponse")
 
 
 def test_job_detail_returns_complete_exact_contract(session_factory):

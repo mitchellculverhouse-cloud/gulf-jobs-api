@@ -40,3 +40,16 @@ class PaginatedJobsResponse(BaseModel):
     has_next: bool
     has_previous: bool
     results: list[JobResult]
+
+
+class JobFilterOptionsResponse(BaseModel):
+    countries: list[str]
+    cities: list[str]
+    categories: list[str]
+    industries: list[str]
+    job_types: list[str]
+    work_modes: list[str]
+    experience_levels: list[str]
+    currencies: list[str]
+    salary_periods: list[str]
+    languages: list[str]
