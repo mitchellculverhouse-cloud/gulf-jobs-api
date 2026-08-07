@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pathlib
 from datetime import date
 from urllib.parse import urlencode
 
@@ -26,6 +27,7 @@ FILTER_OPTION_FIELDS = {
     "work_modes", "experience_levels", "currencies", "salary_periods",
     "languages",
 }
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
 async def _asgi_request(path, method="GET", params=None, headers=None):
@@ -334,20 +336,21 @@ def test_exact_filter_options_keep_compound_values_submittable(session_factory):
 
 
 def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_factory):
-    url = "https://wuzzuf.net/saudi/jobs/p/legacy-taxonomy"
+    url = "https://wuzzuf.net/saudi/jobs/p/structured-sources-engineer"
     malformed_category = (
         "OtherInstallation/Maintenance/RepairInstallation/Maintenance/Repair"
     )
     add_jobs(session_factory, {
         "apply_url": url, "source": "WUZZUF", "category": malformed_category,
         "industry": "ConstructionTechnologyBusiness Services",
+        "job_type": "Part-timeFull-timeFull-time, Independent Project",
+        "work_mode": "Remote WorkWork from Office Company",
     })
-    values = {
-        "title": "Engineer", "apply_url": url, "source": "WUZZUF",
-        "category": "Installation/Maintenance/Repair, Other",
-        "industry": "Construction, Business Services",
-        "_authoritative_fields": ("category", "industry"),
-    }
+    values = importer.parse_wuzzuf_detail(
+        (FIXTURES / "wuzzuf_mixed_sources_detail.html").read_text(),
+        url,
+        importer.SOURCES[0],
+    )
 
     with session_factory() as session:
         original = session.query(Job).one()
@@ -357,6 +360,8 @@ def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_fa
         assert repaired.apply_url == url
         assert repaired.category == "Installation/Maintenance/Repair, Other"
         assert repaired.industry == "Construction, Business Services"
+        assert repaired.job_type == "Full Time, Part Time"
+        assert repaired.work_mode == "Hybrid"
         assert importer.save_job(session, values) == ("unchanged", 0)
         assert session.query(Job).count() == 1
 
@@ -364,8 +369,13 @@ def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_fa
     assert status == 200
     assert options["categories"] == ["Installation/Maintenance/Repair", "Other"]
     assert options["industries"] == ["Business Services", "Construction"]
+    assert options["job_types"] == ["Full Time, Part Time"]
+    assert options["work_modes"] == ["Hybrid"]
     assert malformed_category not in options["categories"]
-    for field, query_name in (("categories", "category"), ("industries", "industry")):
+    for field, query_name in (
+        ("categories", "category"), ("industries", "industry"),
+        ("job_types", "job_type"), ("work_modes", "work_mode"),
+    ):
         for option in options[field]:
             result_status, result = get(**{query_name: option})
             assert result_status == 200

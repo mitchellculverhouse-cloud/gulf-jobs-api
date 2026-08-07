@@ -136,7 +136,57 @@ def test_wuzzuf_structured_multi_values_are_preserved_normalized_and_deduplicate
     assert job["category"] == "Management, Engineering"
     assert job["industry"] == "Construction, Technology"
     assert job["job_type"] == "Full Time, Part Time"
-    assert job["_authoritative_fields"] == ("category", "industry")
+    assert job["_authoritative_fields"] == (
+        "category", "industry", "job_type", "work_mode")
+
+
+def test_mixed_jsonld_and_store_prefers_structured_classification_fields():
+    job = importer.parse_wuzzuf_detail(
+        fixture("wuzzuf_mixed_sources_detail.html"),
+        "https://wuzzuf.net/saudi/jobs/p/structured-sources-engineer",
+        source(),
+    )
+
+    assert job["description"] == "Preserve the reliable JSON-LD description."
+    assert job["category"] == "Installation/Maintenance/Repair, Other"
+    assert job["industry"] == "Construction, Business Services"
+    assert job["job_type"] == "Full Time, Part Time"
+    assert job["work_mode"] == "Hybrid"
+    assert job["_authoritative_fields"] == (
+        "category", "industry", "job_type", "work_mode")
+
+
+def test_jsonld_classification_remains_fallback_when_store_field_is_missing():
+    html = fixture("wuzzuf_mixed_sources_detail.html").replace(
+        '"workTypes":[{"displayedName":"Full-time"},{"displayedName":"Part_time"}],',
+        "",
+    )
+
+    job = importer.parse_wuzzuf_detail(
+        html,
+        "https://wuzzuf.net/saudi/jobs/p/structured-sources-engineer",
+        source(),
+    )
+
+    assert job["job_type"] == "Part-timeFull-timeFull-time, Independent Project"
+    assert "job_type" not in job["_authoritative_fields"]
+
+
+def test_non_authoritative_fallback_does_not_replace_existing_classification(db_factory):
+    url = "https://wuzzuf.net/saudi/jobs/p/structured-sources-engineer"
+    html = fixture("wuzzuf_mixed_sources_detail.html").replace(
+        '"workTypes":[{"displayedName":"Full-time"},{"displayedName":"Part_time"}],',
+        "",
+    )
+    values = importer.parse_wuzzuf_detail(html, url, source())
+    db = db_factory()
+    db.add(Job(title="Engineer", apply_url=url, source="WUZZUF", job_type="Contract"))
+    db.commit()
+
+    importer.save_job(db, values)
+
+    assert db.query(Job).one().job_type == "Contract"
+    db.close()
 
 
 def test_arabic_url_selects_embedded_entity_without_locale_prefix():
