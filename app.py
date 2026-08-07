@@ -1,6 +1,7 @@
 import hmac
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -62,6 +63,38 @@ def cleaned_delimited_values(session, column):
     """Expand importer-delimited multi-values into usable text-filter options."""
     values = cleaned_distinct_values(session, column)
     return sorted({part.strip() for value in values for part in value.split(",") if part.strip()})
+
+
+WUZZUF_JOB_TYPES = {"Full Time", "Part Time", "Contract", "Temporary", "Internship"}
+WUZZUF_WORK_MODES = {"Remote", "Hybrid", "On-site"}
+
+
+def trustworthy_filter_values(session, column, delimited=False, allowed=None):
+    """Hide legacy WUZZUF taxonomy while retaining trustworthy source values.
+
+    Industry has no trustworthy listing source, so callers omit every WUZZUF
+    industry. Exact classifications use the platform's finite normalized
+    vocabulary. Categories reject the characteristic undelimited CamelCase
+    joins produced by the legacy parser; values are never split heuristically.
+    """
+    rows = session.query(column, Job.source).filter(column.isnot(None)).all()
+    values = set()
+    for raw, source in rows:
+        value = (raw or "").strip()
+        if not value:
+            continue
+        if source == "WUZZUF":
+            if allowed is None and column is Job.industry:
+                continue
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+            if allowed is not None and (not parts or any(part not in allowed for part in parts)):
+                continue
+            if delimited and any(re.search(r"[a-z][A-Z]", part) for part in parts):
+                continue
+        else:
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+        values.update(parts if delimited else [value])
+    return sorted(values)
 
 
 def numeric_salary(column, dialect_name):
@@ -256,10 +289,10 @@ def get_job_filter_options():
         return {
             "countries": cleaned_distinct_values(session, Job.country),
             "cities": cleaned_distinct_values(session, Job.city),
-            "categories": cleaned_delimited_values(session, Job.category),
-            "industries": cleaned_delimited_values(session, Job.industry),
-            "job_types": cleaned_distinct_values(session, Job.job_type),
-            "work_modes": cleaned_distinct_values(session, Job.work_mode),
+            "categories": trustworthy_filter_values(session, Job.category, delimited=True),
+            "industries": trustworthy_filter_values(session, Job.industry, delimited=True),
+            "job_types": trustworthy_filter_values(session, Job.job_type, allowed=WUZZUF_JOB_TYPES),
+            "work_modes": trustworthy_filter_values(session, Job.work_mode, allowed=WUZZUF_WORK_MODES),
             "experience_levels": cleaned_distinct_values(session, Job.experience_level),
             "currencies": cleaned_distinct_values(session, Job.salary_currency),
             "salary_periods": cleaned_distinct_values(session, Job.salary_period),

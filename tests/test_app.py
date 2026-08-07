@@ -368,18 +368,46 @@ def test_structured_import_repairs_legacy_taxonomy_and_filter_options(session_fa
     status, options = get("/jobs/filter-options")
     assert status == 200
     assert options["categories"] == ["Installation/Maintenance/Repair", "Other"]
-    assert options["industries"] == ["Business Services", "Construction"]
+    assert options["industries"] == []
     assert options["job_types"] == ["Full Time, Part Time"]
     assert options["work_modes"] == ["Hybrid"]
     assert malformed_category not in options["categories"]
     for field, query_name in (
-        ("categories", "category"), ("industries", "industry"),
-        ("job_types", "job_type"), ("work_modes", "work_mode"),
+        ("categories", "category"), ("job_types", "job_type"),
+        ("work_modes", "work_mode"),
     ):
         for option in options[field]:
             result_status, result = get(**{query_name: option})
             assert result_status == 200
             assert result["total"] == 1
+
+
+def test_filter_options_suppress_untrustworthy_wuzzuf_legacy_values(session_factory):
+    add_jobs(session_factory, {
+        "source": "WUZZUF", "category": "OtherInstallationMaintenanceRepair",
+        "industry": "ConstructionTechnologyBusiness Services",
+        "job_type": "Part-timeFull-time", "work_mode": "Remote WorkWork from Office",
+    }, {
+        "source": "WUZZUF", "category": "Engineering, Software Development",
+        "industry": "Still Untrusted", "job_type": "Full Time", "work_mode": "Remote",
+    }, {
+        "source": "Employer", "category": "Sales", "industry": "Retail",
+        "job_type": "Flexible", "work_mode": "Field-based",
+    })
+
+    status, options = get("/jobs/filter-options")
+
+    assert status == 200
+    assert options["categories"] == ["Engineering", "Sales", "Software Development"]
+    assert options["industries"] == ["Retail"]
+    assert options["job_types"] == ["Flexible", "Full Time"]
+    assert options["work_modes"] == ["Field-based", "Remote"]
+    for option_name, query_name in (
+        ("categories", "category"), ("job_types", "job_type"),
+        ("work_modes", "work_mode"),
+    ):
+        for option in options[option_name]:
+            assert get(**{query_name: option})[1]["total"] >= 1
 
 
 def test_filter_options_empty_database_returns_stable_empty_contract(session_factory):

@@ -64,6 +64,7 @@ def _is_wuzzuf_job_url(url, allowed_hosts):
 
 def parse_wuzzuf_listing(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
+    store = _wuzzuf_store(soup)
     jobs = []
     seen = set()
     allowed_hosts = WUZZUF_HOSTS
@@ -76,10 +77,42 @@ def parse_wuzzuf_listing(html, base_url):
             if not title:
                 continue
             seen.add(url)
-            jobs.append({"title": title, "link": url})
+            listing_values = _wuzzuf_listing_classifications(store, url)
+            jobs.append({"title": title, "link": url, **listing_values})
         except (KeyError, TypeError, ValueError):
             continue
     return jobs
+
+
+def _wuzzuf_listing_classifications(store, url):
+    """Return only classifications carried by the matching listing entity.
+
+    WUZZUF's server-rendered state associates work roles, work types, and the
+    workplace arrangement with a job URI.  Matching that URI avoids treating
+    unrelated card links (notably keyword links) as categories.
+    """
+    if not isinstance(store, dict):
+        return {}
+    jobs = store.get("entities", {}).get("job", {}).get("collection", {})
+    path = _wuzzuf_entity_path(url)
+    entity = next((item for item in jobs.values()
+                   if _wuzzuf_entity_path(item.get("attributes", {}).get("uri")) == path), None)
+    if not entity:
+        return {}
+    attributes = entity.get("attributes", {})
+    values = {
+        "category": ", ".join(_named_values(attributes.get("workRoles"))),
+        "job_type": ", ".join(
+            _named_values(attributes.get("workTypes"), normalize_job_type)
+        ),
+        "work_mode": normalize_work_mode(
+            _named(attributes.get("workplaceArrangement") or {})
+        ),
+    }
+    authoritative = tuple(field for field, value in values.items() if value)
+    if authoritative:
+        values["_authoritative_fields"] = authoritative
+    return {field: value for field, value in values.items() if value}
 
 
 def count_wuzzuf_listing_links(html, base_url):
@@ -686,6 +719,16 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
                     values["title"] = job["title"]
                 if source.get("detail_parser") == "wuzzuf" and not validate_wuzzuf_detail(values):
                     raise ValueError("no meaningful WUZZUF detail enrichment")
+                detail_authoritative = set(values.get("_authoritative_fields", ()))
+                listing_authoritative = set(job.get("_authoritative_fields", ())) & {
+                    "category", "job_type", "work_mode",
+                }
+                if listing_authoritative:
+                    values.update({field: job[field] for field in listing_authoritative})
+                    values["_authoritative_fields"] = tuple(
+                        field for field in WUZZUF_FILTER_FIELDS
+                        if field in detail_authoritative | listing_authoritative
+                    )
                 db = session_factory()
                 try:
                     outcome, duplicate_count = save_job(db, values)
@@ -695,6 +738,33 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
                     db.close()
             except Exception as exc:
                 totals["failed_detail_pages"] += 1
+                repairs = {
+                    field: job[field]
+                    for field in set(job.get("_authoritative_fields", ()))
+                    & {"category", "job_type", "work_mode"}
+                    if not _missing(job.get(field))
+                }
+                if repairs and source.get("detail_parser") == "wuzzuf":
+                    db = session_factory()
+                    try:
+                        existing = db.query(Job).filter(
+                            Job.apply_url == canonical_url(job["link"]),
+                            Job.source == source["name"],
+                        ).first()
+                        if existing is not None:
+                            changed = any(getattr(existing, field) != value
+                                          for field, value in repairs.items())
+                            for field, value in repairs.items():
+                                setattr(existing, field, value)
+                            if changed:
+                                db.commit()
+                                totals["updated"] += 1
+                            else:
+                                totals["unchanged"] += 1
+                    except Exception:
+                        db.rollback()
+                    finally:
+                        db.close()
                 print(f"Detail failed: {job['link']}: {exc}")
             if index + 1 < len(unique):
                 sleeper(max(0, float(source.get("polite_delay", 0))))

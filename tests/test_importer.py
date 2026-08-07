@@ -65,6 +65,23 @@ def test_listing_extracts_only_jobs_and_deduplicates():
     assert importer.count_wuzzuf_listing_links(html, "https://wuzzuf.net") == 3
 
 
+def test_listing_classifications_are_structured_and_associated_by_job_url():
+    jobs = importer.parse_wuzzuf_listing(
+        fixture("wuzzuf_listing.html"), "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia")
+
+    assert jobs[0] == {
+        "title": "Software Engineer",
+        "link": "https://wuzzuf.net/jobs/p/alpha-software-engineer",
+        "category": "Software Development, Engineering",
+        "job_type": "Full Time", "work_mode": "Remote",
+        "_authoritative_fields": ("category", "job_type", "work_mode"),
+    }
+    assert jobs[1]["category"] == "Accounting/Finance"
+    assert jobs[1]["job_type"] == "Part Time"
+    assert jobs[1]["work_mode"] == "On-site"
+    assert "Python" not in jobs[0]["category"] and "SQL" not in jobs[0]["category"]
+
+
 def test_jsonld_extracts_enriched_company_location_salary_and_dates():
     job = importer.parse_wuzzuf_detail(fixture("wuzzuf_jsonld_detail.html"), "https://wuzzuf.net/jobs/p/alpha", source())
     assert job["company_name"] == "Gulf Technology Co."
@@ -467,6 +484,114 @@ def test_detail_failure_isolated_and_outcomes_counted(monkeypatch, db_factory):
     db = db_factory()
     assert db.query(Job).count() == 1
     assert db.query(Job).one().company_name == "Gulf Technology Co."
+    db.close()
+
+
+def test_detail_403_repairs_existing_from_listing_without_inserting_new_job(
+        monkeypatch, db_factory):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    first = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    second = "https://wuzzuf.net/jobs/p/beta-accountant"
+    db = db_factory()
+    existing = Job(
+        title="Keep title", description="Keep description", skills="Keep skills",
+        company_name="Keep company", industry="Keep legacy industry",
+        category="BadCategoryValue", job_type="Full-timePart-time",
+        work_mode="Remote WorkWork from Office", apply_url=first, source="WUZZUF",
+    )
+    db.add(existing)
+    db.commit()
+    original_id = existing.id
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    http = FakeHTTP({
+        listing_url: [Response(fixture("wuzzuf_listing.html")), Response(fixture("wuzzuf_listing.html"))],
+        first: [Response(status=403), Response(status=403)],
+        second: [Response(status=403), Response(status=403)],
+    })
+
+    first_run = importer.run_import(db_factory, http, lambda _: None)
+    second_run = importer.run_import(db_factory, http, lambda _: None)
+
+    assert first_run["updated"] == 1 and first_run["inserted"] == 0
+    assert first_run["failed_detail_pages"] == 2
+    assert second_run["unchanged"] == 1 and second_run["updated"] == 0
+    db = db_factory()
+    assert db.query(Job).count() == 1
+    saved = db.query(Job).one()
+    assert (saved.id, saved.category, saved.job_type, saved.work_mode) == (
+        original_id, "Software Development, Engineering", "Full Time", "Remote")
+    assert (saved.title, saved.description, saved.skills, saved.company_name,
+            saved.industry) == (
+        "Keep title", "Keep description", "Keep skills", "Keep company",
+        "Keep legacy industry")
+    db.close()
+
+
+def test_listing_classifications_override_detail_classifications_only(
+        monkeypatch, db_factory):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    first = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    second = "https://wuzzuf.net/jobs/p/beta-accountant"
+    detail_html = fixture("wuzzuf_jsonld_detail.html")
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    http = FakeHTTP({
+        listing_url: [Response(fixture("wuzzuf_listing.html"))],
+        first: [Response(detail_html)], second: [Response(detail_html)],
+    })
+
+    result = importer.run_import(db_factory, http, lambda _: None)
+
+    assert result["inserted"] == 2
+    db = db_factory()
+    saved = db.query(Job).filter(Job.apply_url == first).one()
+    assert (saved.category, saved.job_type, saved.work_mode) == (
+        "Software Development, Engineering", "Full Time", "Remote")
+    assert saved.company_name == "Gulf Technology Co."
+    assert saved.description == "Build reliable services."
+    assert saved.industry == "Technology"
+    db.close()
+
+
+def test_listing_merge_preserves_authoritative_detail_industry_and_is_idempotent(
+        monkeypatch, db_factory):
+    listing_url = "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia"
+    job_url = "https://wuzzuf.net/jobs/p/alpha-software-engineer"
+    listing_html = fixture("wuzzuf_listing.html").replace(
+        'href="/jobs/p/beta-accountant/"', 'href="/companies/beta"')
+    detail_html = fixture("wuzzuf_mixed_sources_detail.html").replace(
+        "saudi/jobs/p/structured-sources-engineer", "jobs/p/alpha-software-engineer")
+    db = db_factory()
+    db.add(Job(
+        title="Keep title", description="Keep description", skills="Keep skills",
+        company_name="Keep company", country="Qatar", city="Keep city",
+        category="Stale category", industry="Stale industry",
+        job_type="Stale type", work_mode="Stale mode", salary_min="999",
+        apply_url=job_url, source="WUZZUF",
+    ))
+    db.commit()
+    original_id = db.query(Job).one().id
+    db.close()
+    monkeypatch.setattr(importer, "SOURCES", [source(url=listing_url)])
+    http = FakeHTTP({
+        listing_url: [Response(listing_html), Response(listing_html)],
+        job_url: [Response(detail_html), Response(detail_html)],
+    })
+
+    first = importer.run_import(db_factory, http, lambda _: None)
+    second = importer.run_import(db_factory, http, lambda _: None)
+
+    assert first["updated"] == 1 and first["inserted"] == 0
+    assert second["unchanged"] == 1 and second["updated"] == 0
+    db = db_factory()
+    saved = db.query(Job).one()
+    assert (saved.id, saved.category, saved.job_type, saved.work_mode) == (
+        original_id, "Software Development, Engineering", "Full Time", "Remote")
+    assert saved.industry == "Construction, Business Services"
+    assert (saved.title, saved.description, saved.skills, saved.company_name,
+            saved.country, saved.city, saved.salary_min) == (
+        "Keep title", "Keep description", "Keep skills", "Keep company",
+        "Qatar", "Keep city", "999")
     db.close()
 
 
