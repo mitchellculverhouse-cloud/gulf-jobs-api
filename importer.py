@@ -27,6 +27,7 @@ JOB_FIELDS = (
     "languages_required", "date_posted", "closing_date", "apply_url", "source",
 )
 WUZZUF_HOSTS = {"wuzzuf.net", "www.wuzzuf.net"}
+WUZZUF_FILTER_FIELDS = ("category", "industry", "job_type", "work_mode")
 
 
 class UnsupportedParserError(ValueError):
@@ -537,6 +538,90 @@ def get_detail_parser(source):
     if parser_identity == "wuzzuf":
         return parse_wuzzuf_detail
     raise UnsupportedParserError(f"Unsupported detail parser: {parser_identity!r}")
+
+
+def _wuzzuf_source():
+    """Return the configured WUZZUF parser settings used for polite requests."""
+    return next((source for source in SOURCES
+                 if source.get("name") == "WUZZUF"
+                 and source.get("detail_parser") == "wuzzuf"), None)
+
+
+def backfill_wuzzuf_filters(session_factory=Session, http_session=None,
+                            sleeper=time.sleep):
+    """Repair only classifications backed by WUZZUF's structured job entity.
+
+    Rows are selected by source, then revisited through their stored application
+    URL. Each row has its own transaction so a request, parse, or database failure
+    cannot prevent later rows from being considered.
+    """
+    totals = Counter(scanned=0, updated=0, unchanged=0,
+                     skipped_missing_page=0,
+                     skipped_no_authoritative_data=0, failed=0)
+    source = _wuzzuf_source()
+    if source is None:
+        raise UnsupportedParserError("WUZZUF detail source is not configured")
+
+    db = session_factory()
+    try:
+        rows = db.query(Job.id, Job.apply_url).filter(Job.source == source["name"]).all()
+    finally:
+        db.close()
+
+    http = http_session or requests.Session()
+    totals["scanned"] = len(rows)
+    for index, (job_id, stored_url) in enumerate(rows):
+        try:
+            target_url = canonical_url(stored_url)
+            if (target_url != stored_url
+                    or not _is_wuzzuf_job_url(target_url, WUZZUF_HOSTS)):
+                totals["skipped_no_authoritative_data"] += 1
+                continue
+            response = _request(http, target_url, source)
+            values = parse_wuzzuf_detail(response.text, target_url, source)
+            authoritative = set(values.get("_authoritative_fields", ()))
+            repairs = {
+                field: values[field] for field in WUZZUF_FILTER_FIELDS
+                if field in authoritative and not _missing(values.get(field))
+            }
+            if not repairs:
+                totals["skipped_no_authoritative_data"] += 1
+                continue
+
+            db = session_factory()
+            try:
+                job = db.query(Job).filter(
+                    Job.id == job_id,
+                    Job.source == source["name"],
+                    Job.apply_url == stored_url,
+                ).first()
+                if job is None:
+                    totals["failed"] += 1
+                    continue
+                changed = False
+                for field, value in repairs.items():
+                    if getattr(job, field) != value:
+                        setattr(job, field, value)
+                        changed = True
+                if changed:
+                    db.commit()
+                    totals["updated"] += 1
+                else:
+                    totals["unchanged"] += 1
+            except Exception:
+                db.rollback()
+                totals["failed"] += 1
+            finally:
+                db.close()
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            totals["skipped_missing_page" if status in (404, 410) else "failed"] += 1
+        except Exception:
+            totals["failed"] += 1
+        finally:
+            if index + 1 < len(rows):
+                sleeper(max(0, float(source.get("polite_delay", 0))))
+    return dict(totals)
 
 
 def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):

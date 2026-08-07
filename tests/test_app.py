@@ -649,3 +649,39 @@ def test_overlapping_import_returns_conflict_without_running(monkeypatch):
     finally:
         app_module.IMPORT_LOCK.release()
     assert calls == []
+
+
+@pytest.mark.parametrize("headers", [None, {"X-Import-Key": "wrong"}])
+def test_wuzzuf_backfill_rejects_missing_or_wrong_key(monkeypatch, headers):
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    assert post("/maintenance/backfill-wuzzuf-filters", headers=headers) == (
+        401, {"detail": "Invalid import key"})
+
+
+def test_authenticated_wuzzuf_backfill_returns_summary(monkeypatch):
+    summary = {"scanned": 3, "updated": 1, "unchanged": 1,
+               "skipped_missing_page": 1,
+               "skipped_no_authoritative_data": 0, "failed": 0}
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "backfill_wuzzuf_filters", lambda: summary)
+
+    assert post("/maintenance/backfill-wuzzuf-filters",
+                headers={"X-Import-Key": "correct-key"}) == (
+        200, {"status": "completed", **summary})
+
+
+def test_wuzzuf_backfill_is_post_only_and_shares_import_lock(monkeypatch):
+    calls = []
+    monkeypatch.setenv("IMPORT_API_KEY", "correct-key")
+    monkeypatch.setattr(app_module, "backfill_wuzzuf_filters", lambda: calls.append(True))
+    assert get("/maintenance/backfill-wuzzuf-filters")[0] == 405
+    operations = get("/openapi.json")[1]["paths"]["/maintenance/backfill-wuzzuf-filters"]
+    assert "post" in operations and "get" not in operations
+    app_module.IMPORT_LOCK.acquire()
+    try:
+        assert post("/maintenance/backfill-wuzzuf-filters",
+                    headers={"X-Import-Key": "correct-key"}) == (
+            409, {"detail": "Import already running"})
+    finally:
+        app_module.IMPORT_LOCK.release()
+    assert calls == []
