@@ -678,13 +678,15 @@ def parse_lever_posting(posting, source):
     if not isinstance(posting, dict) or not clean_text(source.get("company_name")):
         return None
     title = clean_text(posting.get("text"))
-    country = normalize_country(posting.get("country"))
     raw_country = clean_text(posting.get("country")).casefold()
     # Lever eligibility is intentionally limited to explicit country codes.
     explicit_countries = {"sa", "ae", "qa", "kw", "bh", "om"}
+    if raw_country not in explicit_countries:
+        return None
+    country = normalize_country(raw_country)
     apply_url = canonical_url(posting.get("applyUrl"))
-    if (not title or raw_country not in explicit_countries or not country
-            or not apply_url or not _valid_external_url(apply_url)):
+    if (not title or not country or not apply_url
+            or not _valid_external_url(apply_url)):
         return None
     categories = posting.get("categories")
     categories = categories if isinstance(categories, dict) else {}

@@ -100,6 +100,44 @@ def test_country_is_never_inferred_and_required_values_are_validated():
     assert all(not job[field] for field in unsupported)
 
 
+def test_malformed_country_values_do_not_stop_a_later_valid_posting(
+        tmp_path, monkeypatch):
+    source = lever_source()
+    postings = [
+        {"text": "Numeric country", "country": 123,
+         "categories": {"location": "Riyadh"},
+         "applyUrl": "https://jobs.lever.co/example/numeric/apply"},
+        {"text": "Object country", "country": {"code": "SA"},
+         "categories": {"location": "Riyadh"},
+         "applyUrl": "https://jobs.lever.co/example/object/apply"},
+        {"text": "List country", "country": ["SA"],
+         "categories": {"location": "Riyadh"},
+         "applyUrl": "https://jobs.lever.co/example/list/apply"},
+        {"text": "Later valid role", "country": "SA",
+         "categories": {"location": "Jeddah"},
+         "applyUrl": "https://jobs.lever.co/example/valid/apply"},
+    ]
+    body = json.dumps(postings)
+
+    jobs, count = importer.parse_lever_feed(body, source)
+    assert count == 4
+    assert [(job["title"], job["country"], job["city"]) for job in jobs] == [
+        ("Later valid role", "Saudi Arabia", "Jeddah")]
+
+    http = FakeHTTP({source["url"]: [Response(body)]})
+    sessions = database(tmp_path)
+    monkeypatch.setattr(importer, "SOURCES", [source])
+    result = importer.run_import(sessions, http, lambda _: None)
+
+    assert result["listing_links_found"] == 4
+    assert result["unique_job_urls"] == result["inserted"] == 1
+    assert result["failed_detail_pages"] == 0
+    with sessions() as db:
+        row = db.query(Job).one()
+        assert (row.title, row.country, row.city) == (
+            "Later valid role", "Saudi Arabia", "Jeddah")
+
+
 def test_lever_run_uses_one_feed_request_and_is_idempotent(tmp_path, monkeypatch):
     source = lever_source()
     text = FIXTURE.read_text()
