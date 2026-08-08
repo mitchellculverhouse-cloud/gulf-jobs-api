@@ -107,18 +107,21 @@ def test_candidate_sources_are_inactive_connectivity_only_configurations():
             "name": "Lever - Flow", "type": "json",
             "url": "https://api.lever.co/v0/postings/flowlife?mode=json",
             "active": False, "provider": "lever", "site": "flowlife",
+            "company_name": "Flow",
             "timeout": 45,
         },
         "Lever - Trendyol": {
             "name": "Lever - Trendyol", "type": "json",
             "url": "https://api.lever.co/v0/postings/trendyol?mode=json",
             "active": False, "provider": "lever", "site": "trendyol",
+            "company_name": "Trendyol",
             "timeout": 45,
         },
         "Lever - Contentsquare": {
             "name": "Lever - Contentsquare", "type": "json",
             "url": "https://api.lever.co/v0/postings/contentsquare?mode=json",
             "active": False, "provider": "lever", "site": "contentsquare",
+            "company_name": "Contentsquare",
             "timeout": 45,
         },
     }

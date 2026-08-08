@@ -632,6 +632,118 @@ def save_job(db, values):
     return "inserted", duplicate_count
 
 
+def normalize_lever_job_type(value):
+    """Normalize only unambiguous Lever commitment labels."""
+    value = clean_text(value)
+    comparable = value.casefold().replace("_", " ")
+    if re.search(r"(?:^|[\s,])full[ -]?time(?:$|[\s,])", comparable):
+        return "Full Time"
+    if re.search(r"(?:^|[\s,])part[ -]?time(?:$|[\s,])", comparable):
+        return "Part Time"
+    if comparable in {"intern", "internship"}:
+        return "Internship"
+    if re.search(r"\b(contract|contractor|contractual)\b", comparable):
+        return "Contract"
+    if re.search(r"\b(temporary|temp)\b", comparable):
+        return "Temporary"
+    return value
+
+
+def _lever_salary(value):
+    if not isinstance(value, dict):
+        return "", "", "", ""
+    return (
+        _as_text(value.get("min")),
+        _as_text(value.get("max")),
+        normalize_currency(value.get("currency")),
+        normalize_salary_period(value.get("interval")),
+    )
+
+
+def _lever_plain_text(value):
+    """Clean a plain-text description without discarding useful line breaks."""
+    if value is None:
+        return ""
+    lines = [clean_text(line) for line in str(value).splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _valid_external_url(value):
+    parts = urlsplit(value)
+    return parts.scheme.lower() in {"http", "https"} and bool(parts.hostname)
+
+
+def parse_lever_posting(posting, source):
+    """Map one Lever posting, returning None when required data is invalid."""
+    if not isinstance(posting, dict) or not clean_text(source.get("company_name")):
+        return None
+    title = clean_text(posting.get("text"))
+    raw_country = clean_text(posting.get("country")).casefold()
+    # Lever eligibility is intentionally limited to explicit country codes.
+    explicit_countries = {"sa", "ae", "qa", "kw", "bh", "om"}
+    if raw_country not in explicit_countries:
+        return None
+    country = normalize_country(raw_country)
+    apply_url = canonical_url(posting.get("applyUrl"))
+    if (not title or not country or not apply_url
+            or not _valid_external_url(apply_url)):
+        return None
+    categories = posting.get("categories")
+    categories = categories if isinstance(categories, dict) else {}
+    salary_min, salary_max, currency, period = _lever_salary(posting.get("salaryRange"))
+    values = {
+        "title": title,
+        "company_name": clean_text(source["company_name"]),
+        "country": country,
+        "city": clean_text(categories.get("location")),
+        "description": _lever_plain_text(posting.get("descriptionPlain")),
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "salary_currency": currency,
+        "salary_period": period,
+        "job_type": normalize_lever_job_type(categories.get("commitment")),
+        "work_mode": normalize_work_mode(posting.get("workplaceType"))
+        if clean_text(posting.get("workplaceType")).casefold()
+        in {"onsite", "on-site", "on site", "hybrid", "remote"} else "",
+        "apply_url": apply_url,
+        "source": source["name"],
+    }
+    for field in JOB_FIELDS:
+        values.setdefault(field, None if field in ("date_posted", "closing_date") else "")
+    return values
+
+
+def parse_lever_feed(text, source):
+    """Parse a complete Lever JSON feed while isolating malformed postings."""
+    postings = json.loads(text)
+    if not isinstance(postings, list):
+        raise ValueError("Lever feed must contain a JSON list")
+    jobs = []
+    for posting in postings:
+        try:
+            values = parse_lever_posting(posting, source)
+            if values:
+                jobs.append(values)
+        except (TypeError, ValueError):
+            continue
+    return jobs, len(postings)
+
+
+def _import_lever_source(source, response, totals, session_factory):
+    jobs, posting_count = parse_lever_feed(response.text, source)
+    totals["listing_links_found"] += posting_count
+    unique = {job["apply_url"]: job for job in jobs}
+    totals["unique_job_urls"] += len(unique)
+    for values in unique.values():
+        db = session_factory()
+        try:
+            outcome, duplicate_count = save_job(db, values)
+            totals[outcome] += 1
+            totals["duplicate_database_urls"] += duplicate_count
+        finally:
+            db.close()
+
+
 def dispatch_listing_parser(source, html):
     parser_identity = source.get("listing_parser")
     if parser_identity == "wuzzuf":
@@ -770,6 +882,9 @@ def run_import(session_factory=Session, http_session=None, sleeper=time.sleep):
         print(f"Processing source: {source['name']}")
         try:
             response = _request(http, source["url"], source)
+            if source.get("provider") == "lever":
+                _import_lever_source(source, response, totals, session_factory)
+                continue
             jobs, listing_count = dispatch_listing_parser(source, response.text)
             detail_parser = get_detail_parser(source)
             totals["listing_links_found"] += listing_count
