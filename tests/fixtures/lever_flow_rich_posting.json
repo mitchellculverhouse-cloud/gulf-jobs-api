@@ -1,0 +1,27 @@
+{
+  "id": "flow-rich-role",
+  "text": "Senior Operations Manager",
+  "country": "SA",
+  "categories": {
+    "location": "Riyadh",
+    "commitment": "Full-time"
+  },
+  "descriptionPlain": "About the Company\n\nFlow builds better financial products for businesses.",
+  "lists": [
+    {
+      "text": "About the Role",
+      "content": "<div><p>Own the regional operating plan&nbsp;and delivery.</p><p>Partner with Product &amp; Sales.</p></div>"
+    },
+    {
+      "text": "Responsibilities",
+      "content": "<ul><li><strong>Lead</strong> weekly planning</li><li>Improve service quality<br>across the GCC</li></ul>"
+    },
+    {
+      "text": "Qualifications",
+      "content": "<ul><li>5+ years in operations</li><li>Clear written communication</li></ul>"
+    }
+  ],
+  "additionalPlain": "Why Join Flow?\n\nHelp shape the future of business finance.",
+  "workplaceType": "onsite",
+  "applyUrl": "https://jobs.lever.co/flowlife/flow-rich-role/apply"
+}
