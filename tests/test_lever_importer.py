@@ -340,5 +340,5 @@ def test_production_source_activation_and_trusted_metadata():
             for name in ("Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare")} == {
         "Lever - Flow": (True, "Flow"),
         "Lever - Trendyol": (True, "Trendyol"),
-        "Lever - Contentsquare": (False, "Contentsquare"),
+        "Lever - Contentsquare": (True, "Contentsquare"),
     }
