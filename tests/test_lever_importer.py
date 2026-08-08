@@ -339,6 +339,6 @@ def test_production_source_activation_and_trusted_metadata():
     assert {name: (by_name[name]["active"], by_name[name]["company_name"])
             for name in ("Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare")} == {
         "Lever - Flow": (True, "Flow"),
-        "Lever - Trendyol": (False, "Trendyol"),
+        "Lever - Trendyol": (True, "Trendyol"),
         "Lever - Contentsquare": (False, "Contentsquare"),
     }
