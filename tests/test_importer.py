@@ -99,13 +99,44 @@ def test_candidate_sources_are_inactive_connectivity_only_configurations():
         "listing_parser" not in by_name[name] and "detail_parser" not in by_name[name]
         for name in ("Bayt", "GulfTalent", "Naukrigulf")
     )
+    assert {
+        name: by_name[name]
+        for name in ("Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare")
+    } == {
+        "Lever - Flow": {
+            "name": "Lever - Flow", "type": "json",
+            "url": "https://api.lever.co/v0/postings/flowlife?mode=json",
+            "active": False, "provider": "lever", "site": "flowlife",
+            "timeout": 45,
+        },
+        "Lever - Trendyol": {
+            "name": "Lever - Trendyol", "type": "json",
+            "url": "https://api.lever.co/v0/postings/trendyol?mode=json",
+            "active": False, "provider": "lever", "site": "trendyol",
+            "timeout": 45,
+        },
+        "Lever - Contentsquare": {
+            "name": "Lever - Contentsquare", "type": "json",
+            "url": "https://api.lever.co/v0/postings/contentsquare?mode=json",
+            "active": False, "provider": "lever", "site": "contentsquare",
+            "timeout": 45,
+        },
+    }
+    assert all(
+        "country" not in by_name[name]
+        and "listing_parser" not in by_name[name]
+        and "detail_parser" not in by_name[name]
+        for name in ("Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare")
+    )
 
 
 def test_run_import_skips_inactive_candidate_sources_without_parser_or_http_calls(
         monkeypatch):
     candidates = [source for source in importer.SOURCES if not source["active"]]
     assert [source["name"] for source in candidates] == [
-        "Bayt", "GulfTalent", "Naukrigulf"]
+        "Bayt", "GulfTalent", "Naukrigulf",
+        "Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare",
+    ]
     monkeypatch.setattr(importer, "SOURCES", candidates)
     monkeypatch.setattr(
         importer, "dispatch_listing_parser",
