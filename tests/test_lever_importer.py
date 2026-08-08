@@ -202,7 +202,7 @@ def test_bad_lever_sources_fail_independently_without_detail_failures(tmp_path, 
     assert http.calls == [item["url"] for item in (bad_shape, bad_json, failed, good)]
 
 
-def test_production_source_activation_and_trusted_metadata_are_unchanged_except_metadata():
+def test_production_source_activation_and_trusted_metadata():
     by_name = {source["name"]: source for source in SOURCES}
     assert [(name, by_name[name]["active"]) for name in (
         "WUZZUF", "Bayt", "GulfTalent", "Naukrigulf")
@@ -210,7 +210,7 @@ def test_production_source_activation_and_trusted_metadata_are_unchanged_except_
           ("Naukrigulf", False)]
     assert {name: (by_name[name]["active"], by_name[name]["company_name"])
             for name in ("Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare")} == {
-        "Lever - Flow": (False, "Flow"),
+        "Lever - Flow": (True, "Flow"),
         "Lever - Trendyol": (False, "Trendyol"),
         "Lever - Contentsquare": (False, "Contentsquare"),
     }

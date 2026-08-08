@@ -55,7 +55,7 @@ def source(**changes):
     return value
 
 
-def test_candidate_sources_are_inactive_connectivity_only_configurations():
+def test_source_configurations_and_activation_states():
     by_name = {configured["name"]: configured for configured in importer.SOURCES}
 
     assert by_name["WUZZUF"] == {
@@ -106,7 +106,7 @@ def test_candidate_sources_are_inactive_connectivity_only_configurations():
         "Lever - Flow": {
             "name": "Lever - Flow", "type": "json",
             "url": "https://api.lever.co/v0/postings/flowlife?mode=json",
-            "active": False, "provider": "lever", "site": "flowlife",
+            "active": True, "provider": "lever", "site": "flowlife",
             "company_name": "Flow",
             "timeout": 45,
         },
@@ -138,7 +138,7 @@ def test_run_import_skips_inactive_candidate_sources_without_parser_or_http_call
     candidates = [source for source in importer.SOURCES if not source["active"]]
     assert [source["name"] for source in candidates] == [
         "Bayt", "GulfTalent", "Naukrigulf",
-        "Lever - Flow", "Lever - Trendyol", "Lever - Contentsquare",
+        "Lever - Trendyol", "Lever - Contentsquare",
     ]
     monkeypatch.setattr(importer, "SOURCES", candidates)
     monkeypatch.setattr(

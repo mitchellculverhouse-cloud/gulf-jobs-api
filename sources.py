@@ -49,7 +49,7 @@ SOURCES = [
     "name": "Lever - Flow",
     "type": "json",
     "url": "https://api.lever.co/v0/postings/flowlife?mode=json",
-    "active": False,
+    "active": True,
     "provider": "lever",
     "site": "flowlife",
     "company_name": "Flow",
