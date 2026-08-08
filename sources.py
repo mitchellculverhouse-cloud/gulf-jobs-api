@@ -43,6 +43,36 @@ SOURCES = [
     "country": "Saudi Arabia",
     "language": "English",
     "timeout": 45
+},
+
+{
+    "name": "Lever - Flow",
+    "type": "json",
+    "url": "https://api.lever.co/v0/postings/flowlife?mode=json",
+    "active": False,
+    "provider": "lever",
+    "site": "flowlife",
+    "timeout": 45
+},
+
+{
+    "name": "Lever - Trendyol",
+    "type": "json",
+    "url": "https://api.lever.co/v0/postings/trendyol?mode=json",
+    "active": False,
+    "provider": "lever",
+    "site": "trendyol",
+    "timeout": 45
+},
+
+{
+    "name": "Lever - Contentsquare",
+    "type": "json",
+    "url": "https://api.lever.co/v0/postings/contentsquare?mode=json",
+    "active": False,
+    "provider": "lever",
+    "site": "contentsquare",
+    "timeout": 45
 }
 
 ]
