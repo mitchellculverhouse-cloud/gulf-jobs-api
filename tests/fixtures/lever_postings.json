@@ -1,0 +1,36 @@
+[
+  {
+    "id": "sa-role",
+    "text": "Operations Manager",
+    "country": "SA",
+    "categories": {"location": " Riyadh ", "commitment": "Salaried, full-time"},
+    "descriptionPlain": "Lead regional operations.\nWork with the local team.",
+    "workplaceType": "onsite",
+    "salaryRange": {"min": 18000, "max": 24000, "currency": "sar", "interval": "month"},
+    "hostedUrl": "https://jobs.lever.co/flowlife/sa-role",
+    "applyUrl": "https://jobs.lever.co/flowlife/sa-role/apply?lever-source=feed"
+  },
+  {
+    "id": "ae-role",
+    "text": "Product Manager",
+    "country": "AE",
+    "categories": {"location": "Dubai", "commitment": "Part-time"},
+    "descriptionPlain": "Build products for customers.",
+    "workplaceType": "hybrid",
+    "hostedUrl": "https://jobs.lever.co/example/ae-role",
+    "applyUrl": "https://jobs.lever.co/example/ae-role/apply"
+  },
+  {"text": "Qatar Intern", "country": "QA", "categories": {"location": "Doha", "commitment": "Internship"}, "workplaceType": "remote", "applyUrl": "https://jobs.lever.co/example/qa/apply"},
+  {"text": "Kuwait Contractor", "country": "KW", "categories": {"location": "Kuwait City", "commitment": "Fixed-term contractor"}, "applyUrl": "https://jobs.lever.co/example/kw/apply"},
+  {"text": "Bahrain Temp", "country": "BH", "categories": {"location": "Manama", "commitment": "Temporary assignment"}, "applyUrl": "https://jobs.lever.co/example/bh/apply"},
+  {"text": "Oman Specialist", "country": "OM", "categories": {"location": "Muscat", "commitment": "Special engagement"}, "applyUrl": "https://jobs.lever.co/example/om/apply"},
+  {"text": "US Role", "country": "US", "categories": {"location": "New York"}, "applyUrl": "https://jobs.lever.co/example/us/apply"},
+  {"text": "FR Role", "country": "FR", "applyUrl": "https://jobs.lever.co/example/fr/apply"},
+  {"text": "RO Role", "country": "RO", "applyUrl": "https://jobs.lever.co/example/ro/apply"},
+  {"text": "GB Role", "country": "GB", "applyUrl": "https://jobs.lever.co/example/gb/apply"},
+  {"text": "Riyadh Without Country", "categories": {"location": "Riyadh"}, "applyUrl": "https://jobs.lever.co/example/no-country/apply"},
+  {"text": "Unknown", "country": "XX", "applyUrl": "https://jobs.lever.co/example/unknown/apply"},
+  {"text": "Hosted Only", "country": "SA", "hostedUrl": "https://jobs.lever.co/example/hosted-only"},
+  "malformed posting",
+  {"text": "Later Valid Role", "country": "SA", "categories": {"location": "Jeddah", "commitment": "Full-time"}, "applyUrl": "https://jobs.lever.co/example/later/apply"}
+]

@@ -52,6 +52,7 @@ SOURCES = [
     "active": False,
     "provider": "lever",
     "site": "flowlife",
+    "company_name": "Flow",
     "timeout": 45
 },
 
@@ -62,6 +63,7 @@ SOURCES = [
     "active": False,
     "provider": "lever",
     "site": "trendyol",
+    "company_name": "Trendyol",
     "timeout": 45
 },
 
@@ -72,6 +74,7 @@ SOURCES = [
     "active": False,
     "provider": "lever",
     "site": "contentsquare",
+    "company_name": "Contentsquare",
     "timeout": 45
 }
 
