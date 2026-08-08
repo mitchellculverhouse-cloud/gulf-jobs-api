@@ -60,7 +60,7 @@ SOURCES = [
     "name": "Lever - Trendyol",
     "type": "json",
     "url": "https://api.lever.co/v0/postings/trendyol?mode=json",
-    "active": False,
+    "active": True,
     "provider": "lever",
     "site": "trendyol",
     "company_name": "Trendyol",
