@@ -11,6 +11,7 @@ from sources import SOURCES
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lever_postings.json"
+RICH_FIXTURE = Path(__file__).parent / "fixtures" / "lever_flow_rich_posting.json"
 
 
 class Response:
@@ -49,6 +50,133 @@ def database(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'lever.db'}")
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
+
+
+def rich_posting():
+    return json.loads(RICH_FIXTURE.read_text())
+
+
+def test_rich_description_assembles_plain_lists_and_additional_content_in_order():
+    job = importer.parse_lever_posting(rich_posting(), lever_source())
+    description = job["description"]
+
+    expected_order = [
+        "About the Company", "About the Role", "Responsibilities",
+        "Qualifications", "Why Join Flow?",
+    ]
+    assert [description.index(value) for value in expected_order] == sorted(
+        description.index(value) for value in expected_order
+    )
+    assert "Own the regional operating plan and delivery." in description
+    assert "Partner with Product & Sales." in description
+    assert "- Lead weekly planning\n- Improve service quality" in description
+    assert "- 5+ years in operations\n- Clear written communication" in description
+    assert "Help shape the future of business finance." in description
+    assert "&nbsp;" not in description
+    assert "&amp;" not in description
+    assert not any(tag in description for tag in ("<div", "<p", "<li", "<strong"))
+    assert "\n\n\n" not in description
+    assert job["_provider"] == "lever"
+    assert job["_replace_fields"] == ("description",)
+
+
+def test_missing_null_and_non_list_lists_preserve_other_description_components():
+    posting = rich_posting()
+    for lists in (None, {"text": "not a list"}, "malformed"):
+        candidate = {**posting, "lists": lists}
+        description = importer.parse_lever_posting(candidate, lever_source())["description"]
+        assert description == (
+            "About the Company\n\nFlow builds better financial products for businesses.\n\n"
+            "Why Join Flow?\n\nHelp shape the future of business finance."
+        )
+
+    missing = dict(posting)
+    missing.pop("lists")
+    assert importer.parse_lever_posting(missing, lever_source())["description"] == description
+
+
+def test_malformed_list_sections_are_skipped_without_aborting_valid_sections():
+    posting = rich_posting()
+    valid = posting["lists"][1]
+    posting["lists"] = [
+        None, "bad", {}, {"text": "", "content": "<p>orphan</p>"},
+        {"text": "No content"}, {"text": "Wrong type", "content": {"html": "bad"}},
+        valid,
+    ]
+
+    job = importer.parse_lever_posting(posting, lever_source())
+
+    assert job is not None
+    assert "Responsibilities" in job["description"]
+    assert "orphan" not in job["description"]
+    assert "No content" not in job["description"]
+    assert "Wrong type" not in job["description"]
+
+
+def test_missing_additional_plain_does_not_prevent_rich_description():
+    posting = rich_posting()
+    posting.pop("additionalPlain")
+
+    description = importer.parse_lever_posting(posting, lever_source())["description"]
+
+    assert "About the Role" in description
+    assert "Why Join Flow?" not in description
+
+
+def test_existing_lever_description_is_repaired_in_place_then_unchanged(tmp_path):
+    sessions = database(tmp_path)
+    posting = rich_posting()
+    sparse = {key: value for key, value in posting.items() if key not in ("lists", "additionalPlain")}
+
+    with sessions() as db:
+        sparse_values = importer.parse_lever_posting(sparse, lever_source())
+        assert importer.save_job(db, sparse_values)[0] == "inserted"
+        original = db.query(Job).one()
+        original_id = original.id
+        assert original.description == posting["descriptionPlain"]
+
+        rich_values = importer.parse_lever_posting(posting, lever_source())
+        assert importer.save_job(db, rich_values)[0] == "updated"
+        repaired = db.query(Job).one()
+        assert repaired.id == original_id
+        assert "Responsibilities" in repaired.description
+        assert importer.save_job(db, rich_values)[0] == "unchanged"
+        assert db.query(Job).count() == 1
+
+
+def test_empty_or_malformed_lever_description_never_replaces_existing(tmp_path):
+    sessions = database(tmp_path)
+    posting = rich_posting()
+    with sessions() as db:
+        rich_values = importer.parse_lever_posting(posting, lever_source())
+        assert importer.save_job(db, rich_values)[0] == "inserted"
+        original_description = db.query(Job).one().description
+
+        for bad_description in (None, "  ", {"unexpected": "value"}):
+            malformed = {**posting, "descriptionPlain": bad_description,
+                         "lists": "bad", "additionalPlain": None}
+            values = importer.parse_lever_posting(malformed, lever_source())
+            assert values["description"] == ""
+            assert "_replace_fields" not in values
+            assert importer.save_job(db, values)[0] == "unchanged"
+            assert db.query(Job).one().description == original_description
+
+
+def test_description_replacement_metadata_is_lever_scoped_and_not_persisted(tmp_path):
+    sessions = database(tmp_path)
+    posting = rich_posting()
+    with sessions() as db:
+        values = importer.parse_lever_posting(posting, lever_source())
+        assert importer.save_job(db, values)[0] == "inserted"
+        row = db.query(Job).one()
+        original = row.description
+        assert not hasattr(row, "_replace_fields")
+
+        untrusted = {field: getattr(row, field) for field in importer.JOB_FIELDS}
+        untrusted.update(description="A different meaningful WUZZUF description",
+                         source="WUZZUF", _replace_fields=("description",))
+        assert importer.save_job(db, untrusted)[0] == "unchanged"
+        assert db.query(Job).one().description == original
 
 
 def test_parse_realistic_feed_maps_only_explicit_gcc_postings():

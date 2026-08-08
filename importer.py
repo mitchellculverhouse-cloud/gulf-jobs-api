@@ -533,6 +533,7 @@ def parse_wuzzuf_detail(html, url, source):
 
 
 EMPTY_TEXT_PLACEHOLDERS = {"n/a", "na", "not specified"}
+REPLACEABLE_PROVIDER_FIELDS = {"lever": {"description"}}
 
 
 def _meaningful_text(value):
@@ -584,10 +585,17 @@ def _enrich_job(job, values):
     authoritative_fields = set(values.get("_authoritative_fields", ())) & {
         "category", "industry", "job_type", "work_mode",
     }
+    replace_fields = set(values.get("_replace_fields", ())) & (
+        REPLACEABLE_PROVIDER_FIELDS.get(values.get("_provider"), set())
+    )
+    if job.source != values.get("source"):
+        replace_fields.clear()
     for field in JOB_FIELDS:
         scraped = values.get(field)
         if _should_enrich(
-            field, getattr(job, field), scraped, field in authoritative_fields
+            field, getattr(job, field), scraped,
+            field in authoritative_fields
+            or (field in replace_fields and _meaningful_text(scraped)),
         ):
             setattr(job, field, scraped)
             changed = True
@@ -662,10 +670,71 @@ def _lever_salary(value):
 
 def _lever_plain_text(value):
     """Clean a plain-text description without discarding useful line breaks."""
-    if value is None:
+    if not isinstance(value, str):
         return ""
     lines = [clean_text(line) for line in str(value).splitlines()]
-    return "\n".join(line for line in lines if line)
+    result = []
+    blank = True
+    for line in lines:
+        if line:
+            result.append(line)
+            blank = False
+        elif not blank:
+            result.append("")
+            blank = True
+    return "\n".join(result).strip()
+
+
+def _lever_html_text(value):
+    """Convert Lever section HTML to readable text with visible list items."""
+    if not isinstance(value, str):
+        return ""
+    soup = BeautifulSoup(value, "html.parser")
+    for line_break in soup.find_all("br"):
+        line_break.replace_with("\n")
+    for item in reversed(soup.find_all("li")):
+        item.replace_with(f"- {clean_text(item.get_text(' ', strip=True))}\n")
+    for block in soup.find_all(["p", "div", "section"]):
+        block.insert_before("\n\n")
+        block.append("\n\n")
+
+    lines = [clean_text(line) for line in soup.get_text().splitlines()]
+    paragraphs = []
+    blank = True
+    for line in lines:
+        if line:
+            paragraphs.append(line)
+            blank = False
+        elif not blank:
+            paragraphs.append("")
+            blank = True
+    return "\n".join(paragraphs).strip()
+
+
+def _lever_description(posting):
+    """Assemble the complete published Lever description in feed order."""
+    components = []
+    seen = set()
+
+    def append(value):
+        value = value.strip()
+        comparable = "\n".join(line.rstrip() for line in value.splitlines()).strip()
+        if _meaningful_text(value) and comparable not in seen:
+            seen.add(comparable)
+            components.append(value)
+
+    append(_lever_plain_text(posting.get("descriptionPlain")))
+    sections = posting.get("lists")
+    if isinstance(sections, list):
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            heading = _lever_plain_text(section.get("text"))
+            content = _lever_html_text(section.get("content"))
+            if _meaningful_text(heading) and _meaningful_text(content):
+                append(f"{heading}\n\n{content}")
+    append(_lever_plain_text(posting.get("additionalPlain")))
+    return "\n\n".join(components)
 
 
 def _valid_external_url(value):
@@ -691,12 +760,13 @@ def parse_lever_posting(posting, source):
     categories = posting.get("categories")
     categories = categories if isinstance(categories, dict) else {}
     salary_min, salary_max, currency, period = _lever_salary(posting.get("salaryRange"))
+    description = _lever_description(posting)
     values = {
         "title": title,
         "company_name": clean_text(source["company_name"]),
         "country": country,
         "city": clean_text(categories.get("location")),
-        "description": _lever_plain_text(posting.get("descriptionPlain")),
+        "description": description,
         "salary_min": salary_min,
         "salary_max": salary_max,
         "salary_currency": currency,
@@ -707,7 +777,10 @@ def parse_lever_posting(posting, source):
         in {"onsite", "on-site", "on site", "hybrid", "remote"} else "",
         "apply_url": apply_url,
         "source": source["name"],
+        "_provider": "lever",
     }
+    if _meaningful_text(description):
+        values["_replace_fields"] = ("description",)
     for field in JOB_FIELDS:
         values.setdefault(field, None if field in ("date_posted", "closing_date") else "")
     return values
