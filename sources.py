@@ -71,7 +71,7 @@ SOURCES = [
     "name": "Lever - Contentsquare",
     "type": "json",
     "url": "https://api.lever.co/v0/postings/contentsquare?mode=json",
-    "active": False,
+    "active": True,
     "provider": "lever",
     "site": "contentsquare",
     "company_name": "Contentsquare",

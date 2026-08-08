@@ -964,11 +964,12 @@ def test_source_failure_does_not_stop_later_configured_source(monkeypatch):
 
 def test_source_check_includes_inactive_candidate_sources(monkeypatch):
     candidates = [source for source in app_module.SOURCES if not source["active"]]
-    lever_sources = [
-        ("Lever - Contentsquare",
-         "https://api.lever.co/v0/postings/contentsquare?mode=json"),
+    inactive_sources = [
+        ("Bayt", "https://www.bayt.com/en/saudi-arabia/jobs/"),
+        ("GulfTalent", "https://www.gulftalent.com/saudi-arabia/jobs"),
+        ("Naukrigulf", "https://www.naukrigulf.com/jobs-in-saudi-arabia"),
     ]
-    assert [(source["name"], source["url"]) for source in candidates[-1:]] == lever_sources
+    assert [(source["name"], source["url"]) for source in candidates] == inactive_sources
     responses = [ConnectivityResponse(403, source["url"]) for source in candidates]
     calls = configure_connectivity(monkeypatch, responses, candidates)
 
@@ -980,7 +981,7 @@ def test_source_check_includes_inactive_candidate_sources(monkeypatch):
             for result in body["sources"]] == [
         (source["name"], source["url"]) for source in candidates]
     assert [(result["source"], result["configured_url"])
-            for result in body["sources"][-1:]] == lever_sources
+            for result in body["sources"]] == inactive_sources
     assert [url for url, _ in calls] == [source["url"] for source in candidates]
     assert all(response.closed for response in responses)
 
