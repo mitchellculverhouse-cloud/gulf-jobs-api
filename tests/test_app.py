@@ -962,6 +962,22 @@ def test_source_failure_does_not_stop_later_configured_source(monkeypatch):
     assert response.closed is True
 
 
+def test_source_check_includes_inactive_candidate_sources(monkeypatch):
+    candidates = [source for source in app_module.SOURCES if not source["active"]]
+    responses = [ConnectivityResponse(403, source["url"]) for source in candidates]
+    calls = configure_connectivity(monkeypatch, responses, candidates)
+
+    status, body = post("/maintenance/check-sources",
+                        headers={"X-Import-Key": "correct-key"})
+
+    assert status == 200
+    assert [(result["source"], result["configured_url"])
+            for result in body["sources"]] == [
+        (source["name"], source["url"]) for source in candidates]
+    assert [url for url, _ in calls] == [source["url"] for source in candidates]
+    assert all(response.closed for response in responses)
+
+
 def test_redirect_makes_exactly_one_request_per_configured_source(monkeypatch):
     sources = [
         {"name": "First", "url": "https://first.example/jobs"},
