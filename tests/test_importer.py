@@ -55,6 +55,82 @@ def source(**changes):
     return value
 
 
+def test_candidate_sources_are_inactive_connectivity_only_configurations():
+    by_name = {configured["name"]: configured for configured in importer.SOURCES}
+
+    assert by_name["WUZZUF"] == {
+        "name": "WUZZUF",
+        "type": "html",
+        "url": "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia",
+        "active": True,
+        "country": "Saudi Arabia",
+        "language": "English",
+        "listing_parser": "wuzzuf",
+        "detail_parser": "wuzzuf",
+        "timeout": 45,
+        "polite_delay": 1.0,
+        "max_retries": 2,
+        "retry_delay": 1.0,
+    }
+    assert {
+        name: by_name[name]
+        for name in ("Bayt", "GulfTalent", "Naukrigulf")
+    } == {
+        "Bayt": {
+            "name": "Bayt", "type": "html",
+            "url": "https://www.bayt.com/en/saudi-arabia/jobs/",
+            "active": False, "country": "Saudi Arabia", "language": "English",
+            "timeout": 45,
+        },
+        "GulfTalent": {
+            "name": "GulfTalent", "type": "html",
+            "url": "https://www.gulftalent.com/saudi-arabia/jobs",
+            "active": False, "country": "Saudi Arabia", "language": "English",
+            "timeout": 45,
+        },
+        "Naukrigulf": {
+            "name": "Naukrigulf", "type": "html",
+            "url": "https://www.naukrigulf.com/jobs-in-saudi-arabia",
+            "active": False, "country": "Saudi Arabia", "language": "English",
+            "timeout": 45,
+        },
+    }
+    assert all(
+        "listing_parser" not in by_name[name] and "detail_parser" not in by_name[name]
+        for name in ("Bayt", "GulfTalent", "Naukrigulf")
+    )
+
+
+def test_run_import_skips_inactive_candidate_sources_without_parser_or_http_calls(
+        monkeypatch):
+    candidates = [source for source in importer.SOURCES if not source["active"]]
+    assert [source["name"] for source in candidates] == [
+        "Bayt", "GulfTalent", "Naukrigulf"]
+    monkeypatch.setattr(importer, "SOURCES", candidates)
+    monkeypatch.setattr(
+        importer, "dispatch_listing_parser",
+        lambda *_: pytest.fail("inactive source must not invoke a listing parser"),
+    )
+    monkeypatch.setattr(
+        importer, "get_detail_parser",
+        lambda *_: pytest.fail("inactive source must not invoke a detail parser"),
+    )
+    http = FakeHTTP({})
+
+    result = importer.run_import(
+        session_factory=lambda: pytest.fail("inactive source must not open a database"),
+        http_session=http,
+        sleeper=lambda _: pytest.fail("inactive source must not sleep"),
+    )
+
+    assert result == {
+        "listing_links_found": 0, "unique_job_urls": 0, "inserted": 0,
+        "updated": 0, "unchanged": 0, "failed_detail_pages": 0,
+        "duplicate_database_urls": 0,
+    }
+    assert http.calls == []
+
+
 def test_listing_extracts_only_jobs_and_deduplicates():
     html = fixture("wuzzuf_listing.html")
     jobs = importer.parse_wuzzuf_listing(html, "https://wuzzuf.net/saudi/a/jobs-in-saudi-arabia")
